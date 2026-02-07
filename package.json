@@ -1,0 +1,38 @@
+{
+  "name": "muse-api",
+  "version": "1.0.0",
+  "description": "REST API for Muse movie picker",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "migrate": "tsx src/db/migrate.ts",
+    "seed": "tsx scripts/seed-movies.ts",
+    "seed:500": "tsx scripts/seed-movies.ts --count 500",
+    "seed:1000": "tsx scripts/seed-movies.ts --count 1000",
+    "seed:2000": "tsx scripts/seed-movies.ts --count 2000",
+    "seed:fresh": "tsx scripts/seed-movies.ts --count 1000 --clear",
+    "seed:help": "tsx scripts/seed-movies.ts --help",
+    "db:status": "tsx scripts/db-status.ts",
+    "test": "vitest"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "fastify": "^5.2.1",
+    "pg": "^8.13.1",
+    "pino": "^9.6.0",
+    "pino-pretty": "^13.0.0",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.4"
+  }
+}

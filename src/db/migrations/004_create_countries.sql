@@ -1,0 +1,48 @@
+-- Countries lookup table
+CREATE TABLE countries (
+  code VARCHAR(5) PRIMARY KEY,
+  name VARCHAR(100) NOT NULL
+);
+
+-- Seed with common production countries
+INSERT INTO countries (code, name) VALUES
+  ('US', 'United States'),
+  ('GB', 'United Kingdom'),
+  ('FR', 'France'),
+  ('DE', 'Germany'),
+  ('IT', 'Italy'),
+  ('ES', 'Spain'),
+  ('CA', 'Canada'),
+  ('AU', 'Australia'),
+  ('JP', 'Japan'),
+  ('KR', 'South Korea'),
+  ('CN', 'China'),
+  ('IN', 'India'),
+  ('BR', 'Brazil'),
+  ('MX', 'Mexico'),
+  ('RU', 'Russia'),
+  ('SE', 'Sweden'),
+  ('DK', 'Denmark'),
+  ('NO', 'Norway'),
+  ('FI', 'Finland'),
+  ('NL', 'Netherlands'),
+  ('BE', 'Belgium'),
+  ('AT', 'Austria'),
+  ('CH', 'Switzerland'),
+  ('IE', 'Ireland'),
+  ('NZ', 'New Zealand'),
+  ('AR', 'Argentina'),
+  ('PL', 'Poland'),
+  ('CZ', 'Czech Republic'),
+  ('HU', 'Hungary'),
+  ('GR', 'Greece'),
+  ('PT', 'Portugal'),
+  ('TR', 'Turkey'),
+  ('TH', 'Thailand'),
+  ('HK', 'Hong Kong'),
+  ('TW', 'Taiwan'),
+  ('SG', 'Singapore'),
+  ('ZA', 'South Africa'),
+  ('IL', 'Israel'),
+  ('EG', 'Egypt'),
+  ('NG', 'Nigeria');
