@@ -111,6 +111,41 @@ async function getStatus(): Promise<void> {
     console.log(`     ${name.padEnd(12)} ${row.count}`);
   }
 
+  // Countries
+  const countriesResult = await pool.query<CountResult>('SELECT COUNT(*) as count FROM countries');
+  const totalCountries = parseInt(countriesResult.rows[0].count, 10);
+  const movieCountriesResult = await pool.query<CountResult>('SELECT COUNT(*) as count FROM movie_countries');
+  const totalMovieCountries = parseInt(movieCountriesResult.rows[0].count, 10);
+
+  console.log(`\n  🌍 Countries:             ${totalCountries}`);
+  console.log(`  🔗 Movie-Country Links:   ${totalMovieCountries}`);
+
+  if (totalCountries > 0) {
+    const topCountries = await pool.query<{ name: string; count: string }>(`
+      SELECT c.name, COUNT(mc.movie_id) as count
+      FROM countries c
+      LEFT JOIN movie_countries mc ON c.code = mc.country_code
+      GROUP BY c.code, c.name
+      ORDER BY count DESC
+      LIMIT 10
+    `);
+    console.log(`\n  🏴 Top Countries by Movies:`);
+    for (const row of topCountries.rows) {
+      console.log(`     ${row.name.padEnd(20)} ${row.count}`);
+    }
+  }
+
+  // Migrations
+  console.log(`\n  📋 Migrations:`);
+  try {
+    const migrations = await pool.query<{ name: string; executed_at: string }>('SELECT name, executed_at FROM _migrations ORDER BY id');
+    for (const row of migrations.rows) {
+      console.log(`     ✓ ${row.name}`);
+    }
+  } catch {
+    console.log(`     (no _migrations table found)`);
+  }
+
   // Recent picks
   const picksResult = await pool.query<CountResult>('SELECT COUNT(*) as count FROM user_picks');
   const totalPicks = parseInt(picksResult.rows[0].count, 10);
