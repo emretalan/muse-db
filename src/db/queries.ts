@@ -136,6 +136,41 @@ export async function getMoviesGenres(movieIds: number[]): Promise<Map<number, s
   return genreMap;
 }
 
+// Search for a movie by title (case-insensitive, supports partial matches)
+// Tries exact match first, then prefix match, then contains match.
+// Returns the best-quality match based on vote count.
+export async function searchMovieByTitle(title: string): Promise<MovieRow | null> {
+  // 1. Try exact match first
+  const exact = await pool.query<MovieRow>(
+    `SELECT * FROM movies
+     WHERE LOWER(title) = LOWER($1)
+     ORDER BY vote_count DESC
+     LIMIT 1`,
+    [title]
+  );
+  if (exact.rows.length > 0) return exact.rows[0];
+
+  // 2. Try prefix match (e.g. "Harry Potter" matches "Harry Potter and the Sorcerer's Stone")
+  const prefix = await pool.query<MovieRow>(
+    `SELECT * FROM movies
+     WHERE LOWER(title) LIKE LOWER($1) || '%'
+     ORDER BY vote_count DESC
+     LIMIT 1`,
+    [title]
+  );
+  if (prefix.rows.length > 0) return prefix.rows[0];
+
+  // 3. Try contains match as last resort
+  const contains = await pool.query<MovieRow>(
+    `SELECT * FROM movies
+     WHERE LOWER(title) LIKE '%' || LOWER($1) || '%'
+     ORDER BY vote_count DESC
+     LIMIT 1`,
+    [title]
+  );
+  return contains.rows[0] || null;
+}
+
 // Get recent picks for a session
 export async function getRecentPickMovieIds(sessionId: string): Promise<number[]> {
   const result = await pool.query<{ movie_id: number }>(

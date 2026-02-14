@@ -4,6 +4,7 @@ import { healthRoutes } from './routes/health.js';
 import { genreRoutes } from './routes/genres.js';
 import { pickRoutes } from './routes/pick.js';
 import { candidatesRoutes } from './routes/candidates.js';
+import { searchRoutes } from './routes/search.js';
 
 export function buildServer() {
   const fastify = Fastify({
@@ -54,6 +55,7 @@ export function buildServer() {
   fastify.register(genreRoutes);
   fastify.register(pickRoutes);
   fastify.register(candidatesRoutes);
+  fastify.register(searchRoutes);
 
   return fastify;
 }
