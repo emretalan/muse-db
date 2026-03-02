@@ -14,6 +14,7 @@ interface SearchResponse {
 function toMovie(row: MovieRow, genres: string[]): Movie {
   return {
     id: row.id,
+    tmdbId: row.tmdb_id,
     title: row.title,
     year: row.year,
     runtime: row.runtime || 0,

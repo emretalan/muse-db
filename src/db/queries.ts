@@ -214,3 +214,12 @@ export async function healthCheck(): Promise<boolean> {
     return false;
   }
 }
+
+// Get TMDB ID for a movie by internal ID
+export async function getTmdbId(movieId: number): Promise<number | null> {
+  const result = await pool.query<{ tmdb_id: number }>(
+    'SELECT tmdb_id FROM movies WHERE id = $1',
+    [movieId]
+  );
+  return result.rows[0]?.tmdb_id ?? null;
+}
