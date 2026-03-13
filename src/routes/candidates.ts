@@ -48,7 +48,7 @@ export async function candidatesRoutes(fastify: FastifyInstance): Promise<void> 
         const candidates = await getCandidateMovies(filters || {}, excludeIds);
 
         if (candidates.length === 0) {
-          return { movies: [] };
+          return { movies: [], totalResults: 0 };
         }
 
         const shuffled = candidates.sort(() => Math.random() - 0.5);
