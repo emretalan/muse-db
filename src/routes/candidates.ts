@@ -12,6 +12,7 @@ interface CandidatesRequest {
 
 interface CandidatesResponse {
   movies: Movie[];
+  totalResults: number;
 }
 
 function toMovie(row: MovieRow, genres: string[]): Movie {
@@ -60,7 +61,7 @@ export async function candidatesRoutes(fastify: FastifyInstance): Promise<void> 
           toMovie(movie, genresMap.get(movie.id) || [])
         );
 
-        return { movies };
+        return { movies, totalResults: candidates.length };
       } catch (error) {
         request.log.error(error, 'Candidates fetch failed');
         return reply.status(500).send({
