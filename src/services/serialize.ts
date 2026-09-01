@@ -38,7 +38,7 @@ export function toMovie(row: MovieRow, genres: string[], keywords: string[] = []
     firstEpisodeName: row.first_episode_name,
     firstEpisodeOverview: row.first_episode_overview,
     firstEpisodeStillUrl: row.first_episode_still_path
-      ? `${config.tmdbBackdropBaseUrl}${row.first_episode_still_path}`
+      ? `${config.tmdbStillBaseUrl}${row.first_episode_still_path}`
       : null,
     lastYear: yearOf(row.last_air_date),
   };

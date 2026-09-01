@@ -211,6 +211,34 @@ function buildSweeps(perDecade: number): Sweep[] {
     });
   }
 
+  // Tür taramaları.
+  //
+  // Dönem ve bölge taramaları oy sayısına göre sıralıyor, ve bu türler genel
+  // sıralamada hep aşağıda kalıyor — ilk geçişten sonra kütüphanede 18
+  // belgesel ve 12 realite vardı, oysa TMDB'de sırasıyla 339 ve 193 var.
+  // Uygulamanın tür ekranındaki bir kartın karşılığının boş olması, o kartı
+  // hiç göstermemekten daha kötü.
+  const thinGenres: [string, number, number][] = [
+    ['Belgesel', 99, 150],
+    ['Realite', 10764, 150],
+    ['Savaş ve Politika', 10768, 150],
+    ['Pembe Dizi', 10766, 150],
+    ['Çocuk', 10762, 150],
+  ];
+
+  for (const [label, genreId, target] of thinGenres) {
+    sweeps.push({
+      label: `tür ${label}`,
+      params: {
+        sort_by: 'vote_count.desc',
+        'vote_count.gte': '50',
+        with_genres: String(genreId),
+      },
+      target,
+      minVotes: 50,
+    });
+  }
+
   return sweeps;
 }
 
@@ -360,7 +388,15 @@ async function main(): Promise<void> {
   const countIndex = args.indexOf('--count');
   const perDecade = countIndex >= 0 ? parseInt(args[countIndex + 1], 10) || 200 : 200;
 
-  const sweeps = buildSweeps(perDecade);
+  // --only <önek>: yalnızca etiketi bu önekle başlayan taramaları çalıştır.
+  // İkinci bir geçişte dönem ve bölge taramalarını baştan sayfalamak, hepsi
+  // zaten tabloda olduğu için sadece zaman kaybı.
+  const onlyIndex = args.indexOf('--only');
+  const onlyPrefix = onlyIndex >= 0 ? args[onlyIndex + 1] : null;
+
+  const sweeps = buildSweeps(perDecade).filter(
+    (s) => !onlyPrefix || s.label.startsWith(onlyPrefix)
+  );
   const existing = await getExistingTvIds();
   const before = existing.size;
 
