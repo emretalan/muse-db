@@ -91,14 +91,17 @@ export interface PickFilters {
   mediaType?: MediaType;
   genreIds?: number[] | number;
   era?: Era;
-  /** ISO 639-1 dil kodları — filmin *çekildiği* dil. */
-  origin?: string[] | string;
-  /** ISO 3166-1 ülke kodları — filmin *yapıldığı* ülke. `origin` ile VEYA
-   *  ilişkisinde: Fransa'da çekilmiş İngilizce bir film "Avrupa" filtresine
-   *  dil üzerinden takılmıyordu, ülke üzerinden takılıyor.
+  /** Menşe kovası slug'ı (`"europe"`, `"turkiye"` — bkz. `services/origins.ts`)
+   *  **veya** ham ISO 639-1 dil kodu.
    *
-   *  Yalnızca istemci gönderdiğinde devreye girer; göndermeyen sürümler
-   *  (yayındaki 1.0.8 dahil) bugünkü davranışı aynen görür. */
+   *  İkisinin bir arada kabul edilmesi geriye dönük uyum için: yayındaki
+   *  1.0.9 hâlâ dil kodu listesi gönderiyor, ve slug tanımayan bir değer dil
+   *  kodu sayıldığı için o sürüm bugünkü davranışını aynen görüyor. */
+  origin?: string[] | string;
+  /** ISO 3166-1 ülke kodları. `origin`'in açılımına eklenir ve onunla VEYA
+   *  ilişkisinde çalışır. Slug'lar geldiğinden beri istemcinin bunu ayrıca
+   *  göndermesi gerekmiyor; alan doğrudan ülke sormak isteyen çağrılar için
+   *  duruyor. */
   originCountries?: string[] | string;
   minDuration?: number;
   maxDuration?: number;

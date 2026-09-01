@@ -1,6 +1,7 @@
 import { pool } from './client.js';
 import type { MovieRow, Genre, PickFilters, Era, MediaType } from '../types/index.js';
 import { config } from '../config.js';
+import { expandOrigin, ORIGIN_BUCKETS } from '../services/origins.js';
 
 // Era to year range mapping
 function eraToYearRange(era: Era): { start: number; end: number | null } {
@@ -46,7 +47,10 @@ function normalizeList(value: string[] | string | undefined): string[] {
  */
 function buildCandidateQuery(
   filters: PickFilters,
-  excludeMovieIds: number[]
+  excludeMovieIds: number[],
+  /** `skipOrigin`: menşe koşulunu hiç ekleme. Kova sayımı, menşe dışındaki
+   *  tüm filtreleri paylaşan bir taban sorguya ihtiyaç duyuyor. */
+  options: { skipOrigin?: boolean } = {}
 ): { fromAndWhere: string; params: unknown[] } {
   const {
     minVoteCount,
@@ -66,8 +70,19 @@ function buildCandidateQuery(
   const voteFloorEnglish = isTv ? minVoteCountTv : minVoteCount;
   const voteFloorOther = isTv ? minVoteCountTvNonEnglish : minVoteCountNonEnglish;
 
-  const normalizedOrigin = normalizeList(filters.origin);
-  const normalizedCountries = normalizeList(filters.originCountries).map((c) => c.toUpperCase());
+  // Menşe artık bir kova slug'ı ("europe") olarak da gelebiliyor; `expandOrigin`
+  // slug'ı dil + ülke listesine açıyor, tanımadığı değeri dil kodu sayıyor.
+  const expanded = expandOrigin(normalizeList(filters.origin));
+  const normalizedOrigin = expanded.languages;
+  // Doğrudan ülke soran çağrılar İngilizce kısıtına tabi değil — kova değil,
+  // açık bir istek.
+  const normalizedCountries = [
+    ...new Set([
+      ...expanded.countries.map((c) => c.toUpperCase()),
+      ...normalizeList(filters.originCountries).map((c) => c.toUpperCase()),
+    ]),
+  ];
+  const nonEnglishCountries = expanded.nonEnglishCountries.map((c) => c.toUpperCase());
 
   const normalizedGenreIds =
     typeof filters.genreIds === 'number'
@@ -120,29 +135,40 @@ function buildCandidateQuery(
     paramIndex++;
   }
 
-  // Menşe: dil ve/veya yapım ülkesi.
+  // Menşe: dil VEYA yapım ülkesi.
   //
-  // `originCountries` yalnızca istemci gönderdiğinde devreye giriyor ve dille
-  // VEYA ilişkisinde. Sebebi: "Avrupa" filtresi bugün 14 dilden oluşan bir
-  // liste, yani Fransa'da çekilmiş İngilizce bir film ona takılmıyor.
-  // Göndermeyen istemciler (yayındaki 1.0.8 dahil) bugünkü davranışı görmeye
-  // devam ediyor — bu yüzden koşul eklemeli, mevcut kolun yerine geçen değil.
+  // VEYA, çünkü iki kaynak da eksik olabiliyor: 99 kaydın hiç
+  // `production_countries` bilgisi yok, ve Fransa'da çekilmiş İngilizce bir
+  // film dile takılmıyor. Kova slug'ı gönderen istemci ikisini birden
+  // getiriyor; ham dil kodu gönderen eski sürüm (yayındaki 1.0.9) yalnızca
+  // dil kolunu dolduruyor ve bugünkü davranışını aynen görüyor.
   const originClauses: string[] = [];
-  if (normalizedOrigin.length > 0) {
-    originClauses.push(`m.original_language = ANY($${paramIndex})`);
-    params.push(normalizedOrigin);
-    paramIndex++;
-  }
-  if (normalizedCountries.length > 0) {
-    originClauses.push(
-      `EXISTS (SELECT 1 FROM movie_countries mc
-                WHERE mc.movie_id = m.id AND mc.country_code = ANY($${paramIndex}))`
-    );
-    params.push(normalizedCountries);
-    paramIndex++;
-  }
-  if (originClauses.length > 0) {
-    conditions.push(`(${originClauses.join(' OR ')})`);
+  if (!options.skipOrigin) {
+    if (normalizedOrigin.length > 0) {
+      originClauses.push(`m.original_language = ANY($${paramIndex})`);
+      params.push(normalizedOrigin);
+      paramIndex++;
+    }
+    if (normalizedCountries.length > 0) {
+      originClauses.push(
+        `EXISTS (SELECT 1 FROM movie_countries mc
+                  WHERE mc.movie_id = m.id AND mc.country_code = ANY($${paramIndex}))`
+      );
+      params.push(normalizedCountries);
+      paramIndex++;
+    }
+    if (nonEnglishCountries.length > 0) {
+      originClauses.push(
+        `(m.original_language <> 'en' AND EXISTS (
+            SELECT 1 FROM movie_countries mc
+             WHERE mc.movie_id = m.id AND mc.country_code = ANY($${paramIndex})))`
+      );
+      params.push(nonEnglishCountries);
+      paramIndex++;
+    }
+    if (originClauses.length > 0) {
+      conditions.push(`(${originClauses.join(' OR ')})`);
+    }
   }
 
   // Exclude recently picked movies
@@ -195,6 +221,64 @@ export async function countCandidateMovies(
     params
   );
   return parseInt(result.rows[0].count, 10);
+}
+
+/** Kova slug'ı -> o kovaya düşen başlık sayısı. `any` menşe filtresi hiç
+ *  uygulanmamış toplam. */
+export type OriginCounts = Record<string, number>;
+
+/**
+ * Her menşe kovası için, menşe DIŞINDAKİ filtreler uygulanmış hâlde kaç
+ * başlık kaldığını döndürür.
+ *
+ * Uygulama bunu menşe ekranını çizmeden önce çağırıyor: sonucu boş çıkacak
+ * kovaları sönükleştiriyor. Aksi hâlde kullanıcı "Hindistan + dizi" gibi bir
+ * kombinasyon seçip söz ekranında sessizce takılıyor.
+ *
+ * Kova başına ayrı `countCandidateMovies` çağırmak 8 gidiş dönüş demekti;
+ * kova sayısı sabit olduğu için hepsi tek sorguda `FILTER` ile toplanıyor.
+ */
+export async function countOriginFacets(
+  filters: PickFilters,
+  excludeMovieIds: number[]
+): Promise<OriginCounts> {
+  const { fromAndWhere, params } = buildCandidateQuery(filters, excludeMovieIds, {
+    skipOrigin: true,
+  });
+
+  const selects: string[] = ['COUNT(DISTINCT m.id) AS any'];
+  for (const bucket of ORIGIN_BUCKETS) {
+    const clauses: string[] = [];
+    if (bucket.languages.length > 0) {
+      params.push(bucket.languages);
+      clauses.push(`m.original_language = ANY($${params.length})`);
+    }
+    if (bucket.countries.length > 0) {
+      params.push(bucket.countries);
+      const exists = `EXISTS (SELECT 1 FROM movie_countries mc
+                  WHERE mc.movie_id = m.id AND mc.country_code = ANY($${params.length}))`;
+      clauses.push(
+        bucket.anglophone ? exists : `(m.original_language <> 'en' AND ${exists})`
+      );
+    }
+    if (clauses.length === 0) continue;
+    // Slug tire içeriyor ("far-east"), o yüzden sütun adı tırnaklanıyor.
+    selects.push(
+      `COUNT(DISTINCT m.id) FILTER (WHERE ${clauses.join(' OR ')}) AS "${bucket.slug}"`
+    );
+  }
+
+  const result = await pool.query<Record<string, string>>(
+    `SELECT ${selects.join(', ')} ${fromAndWhere}`,
+    params
+  );
+
+  const row = result.rows[0] ?? {};
+  const counts: OriginCounts = {};
+  for (const [key, value] of Object.entries(row)) {
+    counts[key] = parseInt(value, 10) || 0;
+  }
+  return counts;
 }
 
 // Get genres for a specific movie

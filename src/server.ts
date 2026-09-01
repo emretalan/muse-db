@@ -8,6 +8,7 @@ import { searchRoutes } from './routes/search.js';
 import { trailerRoutes } from './routes/trailer.js';
 import { synopsisRoutes } from './routes/synopsis.js';
 import { providerRoutes } from './routes/providers.js';
+import { originRoutes } from './routes/origins.js';
 
 export function buildServer() {
   const fastify = Fastify({
@@ -62,6 +63,7 @@ export function buildServer() {
   fastify.register(trailerRoutes);
   fastify.register(synopsisRoutes);
   fastify.register(providerRoutes);
+  fastify.register(originRoutes);
 
   return fastify;
 }
