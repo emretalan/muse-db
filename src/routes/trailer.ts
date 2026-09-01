@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { getTmdbId } from '../db/queries.js';
+import { getTmdbRef } from '../db/queries.js';
 import { config } from '../config.js';
 
 interface TrailerParams {
@@ -32,10 +32,11 @@ export async function trailerRoutes(fastify: FastifyInstance): Promise<void> {
       }
 
       try {
-        // Look up TMDB ID from our database
-        const tmdbId = await getTmdbId(movieId);
+        // TMDB kimliği ve tür birlikte: aynı bilgi film için /movie/{id},
+        // dizi için /tv/{id} altında ve kimlikler bağımsız ad alanlarında.
+        const ref = await getTmdbRef(movieId);
 
-        if (!tmdbId) {
+        if (!ref) {
           return reply.status(404).send({ error: 'Movie not found' });
         }
 
@@ -45,7 +46,7 @@ export async function trailerRoutes(fastify: FastifyInstance): Promise<void> {
         }
 
         // Call TMDB videos endpoint
-        const tmdbUrl = `https://api.themoviedb.org/3/movie/${tmdbId}/videos?api_key=${config.tmdbApiKey}&language=en-US`;
+        const tmdbUrl = `https://api.themoviedb.org/3/${ref.mediaType}/${ref.tmdbId}/videos?api_key=${config.tmdbApiKey}&language=en-US`;
         const response = await fetch(tmdbUrl);
 
         if (!response.ok) {

@@ -15,8 +15,32 @@ export const config = {
   // Selection algorithm constants
   selection: {
     minVoteCount: 500,
+    // TMDB'nin oy tabanı ezici çoğunlukla İngilizce konuşuyor, o yüzden tek
+    // bir oy eşiği İngilizce olmayan sinemayı orantısız eliyor: 200 oy almış
+    // bir Türk filmi, kendi izleyicisi içinde 2.000 oy almış İngilizce bir
+    // film kadar tanınmış demek. Tek eşikle kütüphanedeki Japon filmlerinin
+    // üçte biri, Türk filmlerinin yarısı hiç gösterilmiyordu.
+    //
+    // İngilizce tarafı 500'de kalıyor — mevcut kullanıcıların gördüğü havuzun
+    // %96'sı orası ve kalitesi düşmüyor.
+    minVoteCountNonEnglish: 150,
+
+    // Diziler ayrı eşikler istiyor: TMDB'de bir dizi, aynı tanınırlıktaki bir
+    // filmden belirgin şekilde daha az oy topluyor. Film eşikleri dizide
+    // uygulanırsa seed'in eklediği satırların çoğu tabloya girip hiç
+    // gösterilmez — filmde `movie_countries` ile yaşanan ölü veri durumunun
+    // aynısı, ama bu kez baştan.
+    //
+    // Değerler seed taramalarının alt sınırlarıyla hizalı (seed-tv.ts):
+    // dönem taramaları 200, bölge taramaları 50-100.
+    minVoteCountTv: 200,
+    minVoteCountTvNonEnglish: 50,
     minVoteAverage: 5.5,
     minRuntime: 60,
+    // Bir bölüm için 60 dakika anlamsız — bir sitcom bölümü 22 dakika.
+    // "Söz ilk bölüm üzerinedir" kararı gereği dizi satırlarındaki `runtime`
+    // ilk bölümün süresi, ve filtre onun üzerinde çalışıyor.
+    minRuntimeTv: 10,
     recentPicksLimit: 20,
     firstPickTopPercentile: 0.3,
   },

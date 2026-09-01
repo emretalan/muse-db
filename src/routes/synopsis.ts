@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { getMovieSynopsis, getMovieTagline, getTmdbId } from '../db/queries.js';
+import { getMovieSynopsis, getMovieTagline, getTmdbRef } from '../db/queries.js';
 import { config } from '../config.js';
 
 interface SynopsisParams {
@@ -74,9 +74,9 @@ export async function synopsisRoutes(fastify: FastifyInstance): Promise<void> {
       }
 
       try {
-        const tmdbId = await getTmdbId(movieId);
+        const ref = await getTmdbRef(movieId);
 
-        if (!tmdbId) {
+        if (!ref) {
           return reply.status(404).send({ error: 'Movie not found' });
         }
 
@@ -91,7 +91,7 @@ export async function synopsisRoutes(fastify: FastifyInstance): Promise<void> {
         }
 
         // Call TMDB movie detail endpoint with the requested language
-        const tmdbUrl = `https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${config.tmdbApiKey}&language=${tmdbLocale}`;
+        const tmdbUrl = `https://api.themoviedb.org/3/${ref.mediaType}/${ref.tmdbId}?api_key=${config.tmdbApiKey}&language=${tmdbLocale}`;
         const response = await fetch(tmdbUrl);
 
         if (!response.ok) {

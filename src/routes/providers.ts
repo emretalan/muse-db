@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { getTmdbId } from '../db/queries.js';
+import { getTmdbRef } from '../db/queries.js';
 import { config } from '../config.js';
 
 interface ProvidersParams {
@@ -85,9 +85,9 @@ export async function providerRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     try {
-      const tmdbId = await getTmdbId(movieId);
+      const ref = await getTmdbRef(movieId);
 
-      if (!tmdbId) {
+      if (!ref) {
         return reply.status(404).send({ error: 'Movie not found' });
       }
 
@@ -96,7 +96,7 @@ export async function providerRoutes(fastify: FastifyInstance): Promise<void> {
         return emptyPayload(requestedRegion);
       }
 
-      const tmdbUrl = `https://api.themoviedb.org/3/movie/${tmdbId}/watch/providers?api_key=${config.tmdbApiKey}`;
+      const tmdbUrl = `https://api.themoviedb.org/3/${ref.mediaType}/${ref.tmdbId}/watch/providers?api_key=${config.tmdbApiKey}`;
       const response = await fetch(tmdbUrl);
 
       if (!response.ok) {

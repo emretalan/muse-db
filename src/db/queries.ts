@@ -1,5 +1,5 @@
 import { pool } from './client.js';
-import type { MovieRow, Genre, PickFilters, Era } from '../types/index.js';
+import type { MovieRow, Genre, PickFilters, Era, MediaType } from '../types/index.js';
 import { config } from '../config.js';
 
 // Era to year range mapping
@@ -48,7 +48,23 @@ function buildCandidateQuery(
   filters: PickFilters,
   excludeMovieIds: number[]
 ): { fromAndWhere: string; params: unknown[] } {
-  const { minVoteCount, minVoteAverage, minRuntime } = config.selection;
+  const {
+    minVoteCount,
+    minVoteCountNonEnglish,
+    minVoteCountTv,
+    minVoteCountTvNonEnglish,
+    minVoteAverage,
+    minRuntime,
+    minRuntimeTv,
+  } = config.selection;
+
+  // Belirtilmemişse film. Yayındaki istemciler bu alanı göndermiyor ve
+  // yalnızca film görmeye devam etmeli — dizinin sessizce araya karışması
+  // bir güncelleme değil, bir sürpriz olurdu.
+  const mediaType: MediaType = filters.mediaType === 'tv' ? 'tv' : 'movie';
+  const isTv = mediaType === 'tv';
+  const voteFloorEnglish = isTv ? minVoteCountTv : minVoteCount;
+  const voteFloorOther = isTv ? minVoteCountTvNonEnglish : minVoteCountNonEnglish;
 
   const normalizedOrigin = normalizeList(filters.origin);
   const normalizedCountries = normalizeList(filters.originCountries).map((c) => c.toUpperCase());
@@ -63,8 +79,13 @@ function buildCandidateQuery(
   const conditions: string[] = [
     'm.adult = false',
     'm.runtime IS NOT NULL',
-    `m.runtime >= ${minRuntime}`,
-    `m.vote_count >= ${minVoteCount}`,
+    `m.media_type = '${mediaType}'`,
+    `m.runtime >= ${isTv ? minRuntimeTv : minRuntime}`,
+    // Oy eşiği hem dile hem türe göre — gerekçesi config.selection'da.
+    `(
+       (m.original_language = 'en'  AND m.vote_count >= ${voteFloorEnglish})
+    OR (m.original_language <> 'en' AND m.vote_count >= ${voteFloorOther})
+    )`,
     `m.vote_average >= ${minVoteAverage}`,
   ];
 
@@ -253,39 +274,35 @@ export async function getMoviesKeywords(movieIds: number[]): Promise<Map<number,
   return map;
 }
 
-// Search for a movie by title (case-insensitive, supports partial matches)
+// Search for a title (case-insensitive, supports partial matches)
 // Tries exact match first, then prefix match, then contains match.
 // Returns the best-quality match based on vote count.
-export async function searchMovieByTitle(title: string): Promise<MovieRow | null> {
-  // 1. Try exact match first
-  const exact = await pool.query<MovieRow>(
-    `SELECT * FROM movies
-     WHERE LOWER(title) = LOWER($1)
-     ORDER BY vote_count DESC
-     LIMIT 1`,
-    [title]
-  );
-  if (exact.rows.length > 0) return exact.rows[0];
+//
+// Varsayılan olarak yalnızca filmlerde arıyor. Tek çağıran, ana ekrandaki
+// film alıntısına dokunulduğunda o filme gitmek — oraya bir dizinin düşmesi
+// yanlış olurdu.
+export async function searchMovieByTitle(
+  title: string,
+  mediaType: MediaType = 'movie'
+): Promise<MovieRow | null> {
+  const attempts = [
+    'LOWER(title) = LOWER($1)',
+    "LOWER(title) LIKE LOWER($1) || '%'",
+    "LOWER(title) LIKE '%' || LOWER($1) || '%'",
+  ];
 
-  // 2. Try prefix match (e.g. "Harry Potter" matches "Harry Potter and the Sorcerer's Stone")
-  const prefix = await pool.query<MovieRow>(
-    `SELECT * FROM movies
-     WHERE LOWER(title) LIKE LOWER($1) || '%'
-     ORDER BY vote_count DESC
-     LIMIT 1`,
-    [title]
-  );
-  if (prefix.rows.length > 0) return prefix.rows[0];
+  for (const predicate of attempts) {
+    const result = await pool.query<MovieRow>(
+      `SELECT * FROM movies
+       WHERE media_type = $2 AND ${predicate}
+       ORDER BY vote_count DESC
+       LIMIT 1`,
+      [title, mediaType]
+    );
+    if (result.rows.length > 0) return result.rows[0];
+  }
 
-  // 3. Try contains match as last resort
-  const contains = await pool.query<MovieRow>(
-    `SELECT * FROM movies
-     WHERE LOWER(title) LIKE '%' || LOWER($1) || '%'
-     ORDER BY vote_count DESC
-     LIMIT 1`,
-    [title]
-  );
-  return contains.rows[0] || null;
+  return null;
 }
 
 // Get recent picks for a session
@@ -353,11 +370,19 @@ export async function getMovieTagline(movieId: number): Promise<string | null> {
   return tagline && tagline.trim().length > 0 ? tagline.trim() : null;
 }
 
-// Get TMDB ID for a movie by internal ID
-export async function getTmdbId(movieId: number): Promise<number | null> {
-  const result = await pool.query<{ tmdb_id: number }>(
-    'SELECT tmdb_id FROM movies WHERE id = $1',
+/** TMDB kimliği ve tür birlikte.
+ *
+ *  Canlı proxy rotalarının (fragman, izleme platformları, çevrilmiş özet)
+ *  ihtiyacı bu: TMDB'de aynı bilgi film için /movie/{id}/..., dizi için
+ *  /tv/{id}/... altında ve iki ad alanının kimlikleri birbirinden bağımsız.
+ *  Tür bilinmeden doğru yol kurulamıyor. */
+export async function getTmdbRef(
+  movieId: number
+): Promise<{ tmdbId: number; mediaType: MediaType } | null> {
+  const result = await pool.query<{ tmdb_id: number; media_type: MediaType }>(
+    'SELECT tmdb_id, media_type FROM movies WHERE id = $1',
     [movieId]
   );
-  return result.rows[0]?.tmdb_id ?? null;
+  const row = result.rows[0];
+  return row ? { tmdbId: row.tmdb_id, mediaType: row.media_type } : null;
 }

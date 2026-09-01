@@ -31,5 +31,24 @@ export function toMovie(row: MovieRow, genres: string[], keywords: string[] = []
     keywords,
     certification: row.certification || null,
     imdbId: row.imdb_id || null,
+    mediaType: row.media_type,
+    numberOfSeasons: row.number_of_seasons,
+    numberOfEpisodes: row.number_of_episodes,
+    networks: row.networks ?? [],
+    firstEpisodeName: row.first_episode_name,
+    firstEpisodeOverview: row.first_episode_overview,
+    firstEpisodeStillUrl: row.first_episode_still_path
+      ? `${config.tmdbBackdropBaseUrl}${row.first_episode_still_path}`
+      : null,
+    lastYear: yearOf(row.last_air_date),
   };
+}
+
+/** Bir tarih sütunundan yıl. pg `DATE` sütunlarını Date nesnesi olarak
+ *  döndürüyor, ama JSON'dan gelen yollarda dize olabiliyor. */
+function yearOf(value: Date | string | null): number | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  const year = date.getUTCFullYear();
+  return Number.isFinite(year) ? year : null;
 }

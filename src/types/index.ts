@@ -24,6 +24,19 @@ export interface Movie {
   /** Tek bir yaş sınırı; ABD şeması tercih ediliyor. */
   certification: string | null;
   imdbId: string | null;
+
+  /** 'movie' ya da 'tv'. Dizi satırlarında `runtime` ilk bölümün süresini,
+   *  `year` ilk yayın yılını taşıyor — söz ilk bölüm üzerine veriliyor. */
+  mediaType: MediaType;
+  numberOfSeasons: number | null;
+  numberOfEpisodes: number | null;
+  networks: string[];
+  firstEpisodeName: string | null;
+  firstEpisodeOverview: string | null;
+  firstEpisodeStillUrl: string | null;
+  /** Dizinin son yayın yılı; hâlâ devam ediyorsa null. "2011–2019" gibi bir
+   *  aralık göstermek için. */
+  lastYear: number | null;
 }
 
 export interface MovieRow {
@@ -50,6 +63,17 @@ export interface MovieRow {
   status: string | null;
   certification: string | null;
   directors: string[] | null;
+
+  // 009_add_media_type ile eklendi.
+  media_type: MediaType;
+  first_air_date: Date | string | null;
+  last_air_date: Date | string | null;
+  number_of_seasons: number | null;
+  number_of_episodes: number | null;
+  networks: string[] | null;
+  first_episode_name: string | null;
+  first_episode_overview: string | null;
+  first_episode_still_path: string | null;
 }
 
 export interface Genre {
@@ -59,7 +83,12 @@ export interface Genre {
 
 export type Era = 'pre-1980' | '1980-1989' | '1990-1999' | '2000-2009' | '2010-2019' | '2020-now';
 
+/** Kaderin ne seçeceği. Belirtilmezse 'movie' — yayındaki istemciler bu alanı
+ *  hiç göndermiyor ve yalnızca film görmeye devam etmeli. */
+export type MediaType = 'movie' | 'tv';
+
 export interface PickFilters {
+  mediaType?: MediaType;
   genreIds?: number[] | number;
   era?: Era;
   /** ISO 639-1 dil kodları — filmin *çekildiği* dil. */
