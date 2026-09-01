@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { getMovieSynopsis, getMovieTagline, getTmdbRef } from '../db/queries.js';
+import { getLocalTexts, getMovieSynopsis, getTmdbRef } from '../db/queries.js';
 import { config } from '../config.js';
 
 interface SynopsisParams {
@@ -19,6 +19,14 @@ interface SynopsisResponse {
    *  parametresine göre veriyor. Tabloda duran slogan İngilizce; Türkçe bir
    *  ekrana İngilizce slogan koymamak için doğru kaynak bu çağrı. */
   tagline: string | null;
+  /** Dizilerde ilk bölümün adı ve özeti, aynı dilde. Filmlerde null.
+   *
+   *  Bunlar da ek bir istek harcamıyor: TMDB dizi detayına
+   *  `append_to_response=season/1` eklendiğinde sezonun bölümleri aynı
+   *  yanıtta ve aynı dilde geliyor. Sözün üzerine verildiği bölümün özetinin
+   *  Türkçe bir ekranda İngilizce kalmasının sebebi yok. */
+  episodeName: string | null;
+  episodeOverview: string | null;
 }
 
 // Map short language codes to TMDB locale codes
@@ -35,10 +43,14 @@ const LOCALE_MAP: Record<string, string> = {
 };
 
 // In-memory cache: key = "movieId:lang"
-const synopsisCache = new Map<
-  string,
-  { synopsis: string | null; tagline: string | null; cachedAt: number }
->();
+interface CachedTexts {
+  synopsis: string | null;
+  tagline: string | null;
+  episodeName: string | null;
+  episodeOverview: string | null;
+}
+
+const synopsisCache = new Map<string, CachedTexts & { cachedAt: number }>();
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days — synopses rarely change
 
 export async function synopsisRoutes(fastify: FastifyInstance): Promise<void> {
@@ -58,7 +70,8 @@ export async function synopsisRoutes(fastify: FastifyInstance): Promise<void> {
 
       // Return the database synopsis immediately for English, or when the DB already provides a usable value.
       if (normalizedLang === 'en') {
-        return { synopsis: dbSynopsis, tagline: await getMovieTagline(movieId) };
+        const local = await getLocalTexts(movieId);
+        return { synopsis: dbSynopsis, ...local };
       }
 
       const tmdbLocale =
@@ -70,7 +83,8 @@ export async function synopsisRoutes(fastify: FastifyInstance): Promise<void> {
       // Check cache first
       const cached = synopsisCache.get(cacheKey);
       if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) {
-        return { synopsis: cached.synopsis, tagline: cached.tagline };
+        const { cachedAt: _ignored, ...payload } = cached;
+        return payload;
       }
 
       try {
@@ -87,33 +101,44 @@ export async function synopsisRoutes(fastify: FastifyInstance): Promise<void> {
 
         if (!config.tmdbApiKey) {
           request.log.warn('TMDB_API_KEY not configured — cannot fetch localized synopsis');
-          return { synopsis: null, tagline: null };
+          return { synopsis: null, tagline: null, episodeName: null, episodeOverview: null };
         }
 
         // Call TMDB movie detail endpoint with the requested language
-        const tmdbUrl = `https://api.themoviedb.org/3/${ref.mediaType}/${ref.tmdbId}?api_key=${config.tmdbApiKey}&language=${tmdbLocale}`;
+        // Dizide `season/1` ekleniyor: TMDB o sezonun bölümlerini aynı
+        // yanıtta ve aynı dilde döndürüyor, yani ilk bölümün çevrilmiş adı ve
+        // özeti ek bir istek harcamadan geliyor.
+        const append = ref.mediaType === 'tv' ? '&append_to_response=season/1' : '';
+        const tmdbUrl = `https://api.themoviedb.org/3/${ref.mediaType}/${ref.tmdbId}?api_key=${config.tmdbApiKey}&language=${tmdbLocale}${append}`;
         const response = await fetch(tmdbUrl);
 
         if (!response.ok) {
           request.log.error(`TMDB API error: ${response.status}`);
-          return { synopsis: null, tagline: null };
+          return { synopsis: null, tagline: null, episodeName: null, episodeOverview: null };
         }
 
         const data = (await response.json()) as {
           overview?: string;
           tagline?: string;
+          'season/1'?: { episodes?: { name?: string; overview?: string }[] };
         };
 
+        const clean = (value: string | undefined) =>
+          value && value.trim().length > 0 ? value.trim() : null;
+
         // TMDB returns empty string when no translation exists
-        const synopsis = data.overview && data.overview.trim().length > 0 ? data.overview.trim() : null;
+        const synopsis = clean(data.overview);
         // Slogan çoğu dilde çevrilmemiş; boşsa istemci tablodaki İngilizce
-        // sloganı göstermeye devam eder.
-        const tagline = data.tagline && data.tagline.trim().length > 0 ? data.tagline.trim() : null;
+        // sloganı göstermeye devam eder. Bölüm metinleri için de aynısı.
+        const tagline = clean(data.tagline);
+        const firstEpisode = data['season/1']?.episodes?.[0];
+        const episodeName = clean(firstEpisode?.name);
+        const episodeOverview = clean(firstEpisode?.overview);
 
-        // Cache the result
-        synopsisCache.set(cacheKey, { synopsis, tagline, cachedAt: Date.now() });
+        const payload = { synopsis, tagline, episodeName, episodeOverview };
+        synopsisCache.set(cacheKey, { ...payload, cachedAt: Date.now() });
 
-        return { synopsis, tagline };
+        return payload;
       } catch (error) {
         request.log.error(error, 'Localized synopsis fetch failed');
         return reply.status(500).send({ error: 'Failed to fetch synopsis' });

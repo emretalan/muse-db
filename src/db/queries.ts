@@ -360,14 +360,32 @@ export async function getMovieSynopsis(movieId: number): Promise<string | null> 
   return synopsis && synopsis.trim().length > 0 ? synopsis.trim() : null;
 }
 
-// Fetch a movie tagline from the local database (English — the seed's source)
-export async function getMovieTagline(movieId: number): Promise<string | null> {
-  const result = await pool.query<{ tagline: string | null }>(
-    'SELECT tagline FROM movies WHERE id = $1',
+/** Tabloda duran (İngilizce) yardımcı metinler.
+ *
+ *  `/movies/{id}/synopsis` İngilizce istendiğinde TMDB'ye hiç gitmiyor —
+ *  seed zaten bu değerleri yazdı. Üçü tek sorguda geliyor çünkü üçü de aynı
+ *  satırda ve çağıran hepsini birden istiyor. */
+export async function getLocalTexts(movieId: number): Promise<{
+  tagline: string | null;
+  episodeName: string | null;
+  episodeOverview: string | null;
+}> {
+  const result = await pool.query<{
+    tagline: string | null;
+    first_episode_name: string | null;
+    first_episode_overview: string | null;
+  }>(
+    'SELECT tagline, first_episode_name, first_episode_overview FROM movies WHERE id = $1',
     [movieId]
   );
-  const tagline = result.rows[0]?.tagline ?? null;
-  return tagline && tagline.trim().length > 0 ? tagline.trim() : null;
+  const row = result.rows[0];
+  const clean = (v: string | null | undefined) =>
+    v && v.trim().length > 0 ? v.trim() : null;
+  return {
+    tagline: clean(row?.tagline),
+    episodeName: clean(row?.first_episode_name),
+    episodeOverview: clean(row?.first_episode_overview),
+  };
 }
 
 /** TMDB kimliği ve tür birlikte.
