@@ -22,22 +22,36 @@ export async function getAllGenres(): Promise<Genre[]> {
   return result.rows;
 }
 
-// Fetch candidate movies based on filters
-export async function getCandidateMovies(
+/** Aday listesinin üst sınırı. Sayım artık bu sınırdan bağımsız
+ *  (`countCandidateMovies`), yani kütüphane büyüdükçe kullanıcıya gösterilen
+ *  "kaç film arasından" sayısı doğru kalıyor. */
+const CANDIDATE_FETCH_LIMIT = 1000;
+
+function normalizeList(value: string[] | string | undefined): string[] {
+  if (typeof value === 'string') {
+    return value.split(',').map((v) => v.trim().toLowerCase()).filter(Boolean);
+  }
+  if (Array.isArray(value)) {
+    return value.map((v) => v.trim().toLowerCase()).filter(Boolean);
+  }
+  return [];
+}
+
+/**
+ * `/candidates` ve `/pick` için ortak FROM + WHERE kurucusu.
+ *
+ * Aday listesi ile sayımın birebir aynı koşullardan geçmesi şart; ayrı ayrı
+ * yazıldıklarında biri değişip diğeri unutuluyor ve kullanıcıya "1000 film
+ * arasından" denirken aslında 1.659 film oluyordu.
+ */
+function buildCandidateQuery(
   filters: PickFilters,
   excludeMovieIds: number[]
-): Promise<MovieRow[]> {
+): { fromAndWhere: string; params: unknown[] } {
   const { minVoteCount, minVoteAverage, minRuntime } = config.selection;
 
-  const normalizedOrigin =
-    typeof filters.origin === 'string'
-      ? filters.origin
-          .split(',')
-          .map((value) => value.trim().toLowerCase())
-          .filter(Boolean)
-      : Array.isArray(filters.origin)
-        ? filters.origin.map((value) => value.trim().toLowerCase()).filter(Boolean)
-        : [];
+  const normalizedOrigin = normalizeList(filters.origin);
+  const normalizedCountries = normalizeList(filters.originCountries).map((c) => c.toUpperCase());
 
   const normalizedGenreIds =
     typeof filters.genreIds === 'number'
@@ -54,7 +68,7 @@ export async function getCandidateMovies(
     `m.vote_average >= ${minVoteAverage}`,
   ];
 
-  const params: (string | number | number[] | string[])[] = [];
+  const params: unknown[] = [];
   let paramIndex = 1;
 
   // Era filter
@@ -85,11 +99,29 @@ export async function getCandidateMovies(
     paramIndex++;
   }
 
-  // Origin (language) filter
+  // Menşe: dil ve/veya yapım ülkesi.
+  //
+  // `originCountries` yalnızca istemci gönderdiğinde devreye giriyor ve dille
+  // VEYA ilişkisinde. Sebebi: "Avrupa" filtresi bugün 14 dilden oluşan bir
+  // liste, yani Fransa'da çekilmiş İngilizce bir film ona takılmıyor.
+  // Göndermeyen istemciler (yayındaki 1.0.8 dahil) bugünkü davranışı görmeye
+  // devam ediyor — bu yüzden koşul eklemeli, mevcut kolun yerine geçen değil.
+  const originClauses: string[] = [];
   if (normalizedOrigin.length > 0) {
-    conditions.push(`m.original_language = ANY($${paramIndex})`);
+    originClauses.push(`m.original_language = ANY($${paramIndex})`);
     params.push(normalizedOrigin);
     paramIndex++;
+  }
+  if (normalizedCountries.length > 0) {
+    originClauses.push(
+      `EXISTS (SELECT 1 FROM movie_countries mc
+                WHERE mc.movie_id = m.id AND mc.country_code = ANY($${paramIndex}))`
+    );
+    params.push(normalizedCountries);
+    paramIndex++;
+  }
+  if (originClauses.length > 0) {
+    conditions.push(`(${originClauses.join(' OR ')})`);
   }
 
   // Exclude recently picked movies
@@ -102,24 +134,46 @@ export async function getCandidateMovies(
   // Genre filter (if specified)
   let genreJoin = '';
   if (normalizedGenreIds.length > 0) {
-    genreJoin = `
-      INNER JOIN movie_genres mg ON m.id = mg.movie_id
-    `;
+    genreJoin = '\n      INNER JOIN movie_genres mg ON m.id = mg.movie_id\n    ';
     conditions.push(`mg.genre_id = ANY($${paramIndex})`);
     params.push(normalizedGenreIds);
     paramIndex++;
   }
 
-  const query = `
-    SELECT DISTINCT m.*
+  const fromAndWhere = `
     FROM movies m
     ${genreJoin}
     WHERE ${conditions.join(' AND ')}
-    LIMIT 1000
   `;
 
-  const result = await pool.query<MovieRow>(query, params);
+  return { fromAndWhere, params };
+}
+
+// Fetch candidate movies based on filters
+export async function getCandidateMovies(
+  filters: PickFilters,
+  excludeMovieIds: number[]
+): Promise<MovieRow[]> {
+  const { fromAndWhere, params } = buildCandidateQuery(filters, excludeMovieIds);
+  const result = await pool.query<MovieRow>(
+    `SELECT DISTINCT m.* ${fromAndWhere} LIMIT ${CANDIDATE_FETCH_LIMIT}`,
+    params
+  );
   return result.rows;
+}
+
+/** Filtrelere uyan toplam film sayısı — aday listesinin üst sınırından
+ *  bağımsız. Uygulama bunu "kaç film arasından seçiliyor" diye gösteriyor. */
+export async function countCandidateMovies(
+  filters: PickFilters,
+  excludeMovieIds: number[]
+): Promise<number> {
+  const { fromAndWhere, params } = buildCandidateQuery(filters, excludeMovieIds);
+  const result = await pool.query<{ count: string }>(
+    `SELECT COUNT(DISTINCT m.id) AS count ${fromAndWhere}`,
+    params
+  );
+  return parseInt(result.rows[0].count, 10);
 }
 
 // Get genres for a specific movie
@@ -153,6 +207,50 @@ export async function getMoviesGenres(movieIds: number[]): Promise<Map<number, s
     genreMap.set(row.movie_id, genres);
   }
   return genreMap;
+}
+
+/** Detay ekranında gösterilecek anahtar kelime sayısı. TMDB bir filme 30+
+ *  etiket verebiliyor; ekranda okunabilir olan ilk birkaçı. */
+const MAX_KEYWORDS_PER_MOVIE = 8;
+
+// Get keywords for a single movie
+export async function getMovieKeywords(movieId: number): Promise<string[]> {
+  const result = await pool.query<{ name: string }>(
+    `SELECT k.name
+     FROM keywords k
+     INNER JOIN movie_keywords mk ON k.id = mk.keyword_id
+     WHERE mk.movie_id = $1
+     ORDER BY k.name
+     LIMIT $2`,
+    [movieId, MAX_KEYWORDS_PER_MOVIE]
+  );
+  return result.rows.map((row) => row.name);
+}
+
+// Get keywords for multiple movies at once
+export async function getMoviesKeywords(movieIds: number[]): Promise<Map<number, string[]>> {
+  if (movieIds.length === 0) return new Map();
+
+  const result = await pool.query<{ movie_id: number; name: string }>(
+    `SELECT mk.movie_id, k.name
+     FROM keywords k
+     INNER JOIN movie_keywords mk ON k.id = mk.keyword_id
+     WHERE mk.movie_id = ANY($1)
+     ORDER BY mk.movie_id, k.name`,
+    [movieIds]
+  );
+
+  const map = new Map<number, string[]>();
+  for (const row of result.rows) {
+    const list = map.get(row.movie_id) || [];
+    // Kesme sorguda değil burada: LIMIT çok satırlı bir sonuç kümesinde
+    // film başına değil toplamda çalışırdı.
+    if (list.length < MAX_KEYWORDS_PER_MOVIE) {
+      list.push(row.name);
+      map.set(row.movie_id, list);
+    }
+  }
+  return map;
 }
 
 // Search for a movie by title (case-insensitive, supports partial matches)
@@ -243,6 +341,16 @@ export async function getMovieSynopsis(movieId: number): Promise<string | null> 
 
   const synopsis = result.rows[0]?.synopsis ?? null;
   return synopsis && synopsis.trim().length > 0 ? synopsis.trim() : null;
+}
+
+// Fetch a movie tagline from the local database (English — the seed's source)
+export async function getMovieTagline(movieId: number): Promise<string | null> {
+  const result = await pool.query<{ tagline: string | null }>(
+    'SELECT tagline FROM movies WHERE id = $1',
+    [movieId]
+  );
+  const tagline = result.rows[0]?.tagline ?? null;
+  return tagline && tagline.trim().length > 0 ? tagline.trim() : null;
 }
 
 // Get TMDB ID for a movie by internal ID

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { getMovieSynopsis, getTmdbId } from '../db/queries.js';
+import { getMovieSynopsis, getMovieTagline, getTmdbId } from '../db/queries.js';
 import { config } from '../config.js';
 
 interface SynopsisParams {
@@ -12,6 +12,13 @@ interface SynopsisQuery {
 
 interface SynopsisResponse {
   synopsis: string | null;
+  /** Filmin sloganı, aynı dilde.
+   *
+   *  Ayrı bir uç nokta değil çünkü ayrı bir isteğe de gerek yok: TMDB'nin
+   *  film detayı `overview` ile `tagline`'ı aynı yanıtta, aynı `language`
+   *  parametresine göre veriyor. Tabloda duran slogan İngilizce; Türkçe bir
+   *  ekrana İngilizce slogan koymamak için doğru kaynak bu çağrı. */
+  tagline: string | null;
 }
 
 // Map short language codes to TMDB locale codes
@@ -28,7 +35,10 @@ const LOCALE_MAP: Record<string, string> = {
 };
 
 // In-memory cache: key = "movieId:lang"
-const synopsisCache = new Map<string, { synopsis: string | null; cachedAt: number }>();
+const synopsisCache = new Map<
+  string,
+  { synopsis: string | null; tagline: string | null; cachedAt: number }
+>();
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days — synopses rarely change
 
 export async function synopsisRoutes(fastify: FastifyInstance): Promise<void> {
@@ -48,7 +58,7 @@ export async function synopsisRoutes(fastify: FastifyInstance): Promise<void> {
 
       // Return the database synopsis immediately for English, or when the DB already provides a usable value.
       if (normalizedLang === 'en') {
-        return { synopsis: dbSynopsis };
+        return { synopsis: dbSynopsis, tagline: await getMovieTagline(movieId) };
       }
 
       const tmdbLocale =
@@ -60,7 +70,7 @@ export async function synopsisRoutes(fastify: FastifyInstance): Promise<void> {
       // Check cache first
       const cached = synopsisCache.get(cacheKey);
       if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) {
-        return { synopsis: cached.synopsis };
+        return { synopsis: cached.synopsis, tagline: cached.tagline };
       }
 
       try {
@@ -77,7 +87,7 @@ export async function synopsisRoutes(fastify: FastifyInstance): Promise<void> {
 
         if (!config.tmdbApiKey) {
           request.log.warn('TMDB_API_KEY not configured — cannot fetch localized synopsis');
-          return { synopsis: null };
+          return { synopsis: null, tagline: null };
         }
 
         // Call TMDB movie detail endpoint with the requested language
@@ -86,20 +96,24 @@ export async function synopsisRoutes(fastify: FastifyInstance): Promise<void> {
 
         if (!response.ok) {
           request.log.error(`TMDB API error: ${response.status}`);
-          return { synopsis: null };
+          return { synopsis: null, tagline: null };
         }
 
         const data = (await response.json()) as {
           overview?: string;
+          tagline?: string;
         };
 
         // TMDB returns empty string when no translation exists
         const synopsis = data.overview && data.overview.trim().length > 0 ? data.overview.trim() : null;
+        // Slogan çoğu dilde çevrilmemiş; boşsa istemci tablodaki İngilizce
+        // sloganı göstermeye devam eder.
+        const tagline = data.tagline && data.tagline.trim().length > 0 ? data.tagline.trim() : null;
 
         // Cache the result
-        synopsisCache.set(cacheKey, { synopsis, cachedAt: Date.now() });
+        synopsisCache.set(cacheKey, { synopsis, tagline, cachedAt: Date.now() });
 
-        return { synopsis };
+        return { synopsis, tagline };
       } catch (error) {
         request.log.error(error, 'Localized synopsis fetch failed');
         return reply.status(500).send({ error: 'Failed to fetch synopsis' });

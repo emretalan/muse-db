@@ -25,6 +25,9 @@ export const config = {
   tmdbImageBaseUrl: 'https://image.tmdb.org/t/p/w500',
   // Provider logos are small chips — w500 would be ~25x oversized
   tmdbLogoBaseUrl: 'https://image.tmdb.org/t/p/w92',
+  // Backdrops are 16:9 and sit behind the whole detail screen, so they need
+  // real width — w500 on a 3x phone would visibly soften.
+  tmdbBackdropBaseUrl: 'https://image.tmdb.org/t/p/w1280',
 } as const;
 
 export function validateConfig(): void {

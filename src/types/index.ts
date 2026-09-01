@@ -4,12 +4,26 @@ export interface Movie {
   id: number;
   tmdbId: number;
   title: string;
+  /** Yerelleştirilmiş başlıktan farklıysa göstermeye değer. */
+  originalTitle: string | null;
   year: number;
   runtime: number;
   synopsis: string;
+  /** Filmin tek cümlelik sloganı; TMDB'de çoğu filmde var, çoğunda yok. */
+  tagline: string | null;
   posterUrl: string;
+  /** Yatay sahne görseli. Afişin aksine detay ekranının arkasına ve
+   *  paylaşım kartına uygun. */
+  backdropUrl: string | null;
   voteAverage: number;
   genres: string[];
+  directors: string[];
+  /** Serbest etiketler ("time travel", "heist"). Tür 19 kutuya sıkışık,
+   *  bunlar binlerce; ruh hâli temelli seçim için doğru katman. */
+  keywords: string[];
+  /** Tek bir yaş sınırı; ABD şeması tercih ediliyor. */
+  certification: string | null;
+  imdbId: string | null;
 }
 
 export interface MovieRow {
@@ -26,6 +40,16 @@ export interface MovieRow {
   original_language: string;
   adult: boolean;
   created_at: Date;
+
+  // 008_enrich_movies ile eklendi. Hepsi nullable: seed betiği ikinci kez
+  // geçene kadar eski satırlarda boş kalıyorlar.
+  backdrop_path: string | null;
+  tagline: string | null;
+  imdb_id: string | null;
+  popularity: string | number | null;
+  status: string | null;
+  certification: string | null;
+  directors: string[] | null;
 }
 
 export interface Genre {
@@ -38,7 +62,15 @@ export type Era = 'pre-1980' | '1980-1989' | '1990-1999' | '2000-2009' | '2010-2
 export interface PickFilters {
   genreIds?: number[] | number;
   era?: Era;
+  /** ISO 639-1 dil kodları — filmin *çekildiği* dil. */
   origin?: string[] | string;
+  /** ISO 3166-1 ülke kodları — filmin *yapıldığı* ülke. `origin` ile VEYA
+   *  ilişkisinde: Fransa'da çekilmiş İngilizce bir film "Avrupa" filtresine
+   *  dil üzerinden takılmıyordu, ülke üzerinden takılıyor.
+   *
+   *  Yalnızca istemci gönderdiğinde devreye girer; göndermeyen sürümler
+   *  (yayındaki 1.0.8 dahil) bugünkü davranışı aynen görür. */
+  originCountries?: string[] | string;
   minDuration?: number;
   maxDuration?: number;
 }

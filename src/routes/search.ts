@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
-import { searchMovieByTitle, getMovieGenres } from '../db/queries.js';
+import { searchMovieByTitle, getMovieGenres, getMovieKeywords } from '../db/queries.js';
 import type { Movie, MovieRow } from '../types/index.js';
-import { config } from '../config.js';
+import { toMovie } from '../services/serialize.js';
 
 interface SearchQuery {
   title: string;
@@ -9,22 +9,6 @@ interface SearchQuery {
 
 interface SearchResponse {
   movie: Movie | null;
-}
-
-function toMovie(row: MovieRow, genres: string[]): Movie {
-  return {
-    id: row.id,
-    tmdbId: row.tmdb_id,
-    title: row.title,
-    year: row.year,
-    runtime: row.runtime || 0,
-    synopsis: row.synopsis || '',
-    posterUrl: row.poster_path
-      ? `${config.tmdbImageBaseUrl}${row.poster_path}`
-      : '',
-    voteAverage: Number(row.vote_average),
-    genres,
-  };
 }
 
 export async function searchRoutes(fastify: FastifyInstance): Promise<void> {
@@ -44,8 +28,11 @@ export async function searchRoutes(fastify: FastifyInstance): Promise<void> {
           return { movie: null };
         }
 
-        const genres = await getMovieGenres(row.id);
-        return { movie: toMovie(row, genres) };
+        const [genres, keywords] = await Promise.all([
+          getMovieGenres(row.id),
+          getMovieKeywords(row.id),
+        ]);
+        return { movie: toMovie(row, genres, keywords) };
       } catch (error) {
         request.log.error(error, 'Movie search failed');
         return reply.status(500).send({

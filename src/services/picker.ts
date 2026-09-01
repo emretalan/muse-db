@@ -1,7 +1,9 @@
 import type { Movie, MovieRow, PickFilters, WeightedCandidate } from '../types/index.js';
 import { config } from '../config.js';
+import { toMovie } from './serialize.js';
 import {
   getCandidateMovies,
+  getMovieKeywords,
   getMoviesGenres,
   getRecentPickMovieIds,
   isFirstPickForSession,
@@ -31,23 +33,6 @@ function weightedRandomSelect(candidates: WeightedCandidate[]): WeightedCandidat
 
   // Fallback to last candidate (shouldn't happen)
   return candidates[candidates.length - 1];
-}
-
-// Convert database row to API response
-function toMovie(row: MovieRow, genres: string[]): Movie {
-  return {
-    id: row.id,
-    tmdbId: row.tmdb_id,
-    title: row.title,
-    year: row.year,
-    runtime: row.runtime || 0,
-    synopsis: row.synopsis || '',
-    posterUrl: row.poster_path
-      ? `${config.tmdbImageBaseUrl}${row.poster_path}`
-      : '',
-    voteAverage: Number(row.vote_average),
-    genres,
-  };
 }
 
 // Main pick function
@@ -103,5 +88,6 @@ export async function pickMovie(
   await recordPick(sessionId, selected.movie.id, filters);
 
   // Step 8: Return the movie
-  return toMovie(selected.movie, selected.genres);
+  const keywords = await getMovieKeywords(selected.movie.id);
+  return toMovie(selected.movie, selected.genres, keywords);
 }

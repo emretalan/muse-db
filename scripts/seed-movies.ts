@@ -39,6 +39,11 @@ interface TMDBMovie {
   runtime?: number;
   overview: string;
   poster_path: string | null;
+  backdrop_path?: string | null;
+  tagline?: string | null;
+  imdb_id?: string | null;
+  popularity?: number;
+  status?: string;
   vote_average: number;
   vote_count: number;
   original_language: string;
@@ -46,6 +51,14 @@ interface TMDBMovie {
   genre_ids?: number[];
   genres?: { id: number; name: string }[];
   production_countries?: { iso_3166_1: string; name: string }[];
+
+  // append_to_response ile aynı çağrıda gelen alt kaynaklar — ek istek değil,
+  // sadece daha büyük bir yanıt.
+  credits?: { crew?: { job: string; name: string }[] };
+  keywords?: { keywords?: { id: number; name: string }[] };
+  release_dates?: {
+    results?: { iso_3166_1: string; release_dates: { certification: string }[] }[];
+  };
 }
 
 interface TMDBResponse {
@@ -60,6 +73,11 @@ interface SeedOptions {
   source: 'popular' | 'top_rated' | 'both';
   minVotes: number;
   clear: boolean;
+  /** Yeni film aramak yerine tablodaki mevcut filmleri TMDB'den yeniden çek.
+   *  Yeni sütunları (yönetmen, anahtar kelime, backdrop, slogan, sertifika)
+   *  geriye dönük doldurmanın tek yolu bu — `popular`/`top_rated` listeleri
+   *  kütüphanedeki 2.129 filmin ancak bir kısmına denk geliyor. */
+  refresh: boolean;
 }
 
 interface SeedProgress {
@@ -89,6 +107,7 @@ function parseArgs(): SeedOptions {
     source: 'both',
     minVotes: 100,
     clear: false,
+    refresh: false,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -97,6 +116,11 @@ function parseArgs(): SeedOptions {
     if (arg === '--help' || arg === '-h') {
       printHelp();
       process.exit(0);
+    }
+
+    if (arg === '--refresh') {
+      options.refresh = true;
+      continue;
     }
 
     if (arg === '--count' || arg === '-c') {
@@ -109,6 +133,32 @@ function parseArgs(): SeedOptions {
     } else if (arg === '--min-votes') {
       options.minVotes = parseInt(args[++i], 10) || 100;
     } else if (arg === '--clear') {
+      // `movies.id` bir SERIAL ve bu değer sunucunun dışında yaşıyor: her
+      // kullanıcının cihazındaki SwiftData arşivinde (`MovieDeal.movieId`),
+      // Firestore'daki `users/{uid}/deals/{id}.movieId` alanında, ve
+      // uygulamanın her tören başında gönderdiği `excludeMovieIds` listesinde.
+      //
+      // Temizleyip yeniden seed etmek serial'leri baştan dağıtır — herkesin
+      // arşivindeki her kayıt başka bir filme işaret etmeye başlar, geri
+      // dönüşü yok. Bu yüzden bayrak tek başına yetmiyor; ve red veritabanına
+      // hiç bağlanmadan, burada veriliyor.
+      if (!args.includes('--i-know-this-destroys-user-archives')) {
+        console.error(`
+  ❌ --clear reddedildi.
+
+     Bu işlem movies.id serial'lerini yeniden dağıtır. O kimlikler
+     kullanıcıların cihazındaki arşivde ve Firestore'da duruyor; temizlik
+     sonrası herkesin arşivi yanlış filmlere işaret eder.
+
+     Kütüphaneyi büyütmek için --clear gerekmiyor: seed zaten
+     ON CONFLICT (tmdb_id) DO UPDATE ile ekleme yapıyor, yani mevcut
+     satırları kimliklerini koruyarak günceller.
+
+     Gerçekten sıfırdan bir *yerel geliştirme* veritabanı kuruyorsan
+     --i-know-this-destroys-user-archives bayrağını da ekle.
+`);
+        process.exit(1);
+      }
       options.clear = true;
     }
   }
@@ -129,6 +179,10 @@ Options:
   --count, -c <number>    Number of movies to fetch (default: 500)
   --source, -s <type>     Source: 'popular', 'top_rated', 'both' (default: 'both')
   --min-votes <number>    Minimum vote count for quality (default: 100)
+  --refresh               Re-fetch every movie already in the table from TMDB
+                          and backfill the enrichment columns (directors,
+                          keywords, backdrop, tagline, certification).
+                          Adds no new movies and never changes an id.
   --clear                 Clear existing movies before seeding
   --help, -h              Show this help message
 
@@ -202,8 +256,50 @@ async function fetchFromTMDB<T>(endpoint: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+/** Yaş sınırının hangi ülkeden alınacağı. ABD şeması (G/PG/PG-13/R) en tanıdık
+ *  olanı; yoksa Birleşik Krallık, o da yoksa dolu olan ilk değer. */
+const CERTIFICATION_PREFERENCE = ['US', 'GB'];
+
 async function fetchMovieDetails(movieId: number): Promise<TMDBMovie> {
-  return fetchFromTMDB<TMDBMovie>(`/movie/${movieId}`);
+  // Yönetmen, anahtar kelimeler ve yaş sınırı bu üç alt kaynakta duruyor ve
+  // append_to_response sayesinde hiç ek istek harcamadan aynı yanıtla geliyor.
+  return fetchFromTMDB<TMDBMovie>(
+    `/movie/${movieId}?append_to_response=credits,keywords,release_dates`
+  );
+}
+
+/** credits.crew içinden yönetmen isimleri. Bir filmin birden fazla yönetmeni
+ *  olabilir (Coen kardeşler), o yüzden dizi. */
+function extractDirectors(movie: TMDBMovie): string[] | null {
+  const crew = movie.credits?.crew;
+  if (!crew) return null;
+  const names = crew.filter((c) => c.job === 'Director').map((c) => c.name);
+  return names.length > 0 ? [...new Set(names)] : null;
+}
+
+/** release_dates içinden tek bir yaş sınırı. TMDB bunu ülke ülke veriyor ve
+ *  çoğu ülke için boş string dönüyor — boşlar elenmeli. */
+function extractCertification(movie: TMDBMovie): string | null {
+  const results = movie.release_dates?.results;
+  if (!results) return null;
+
+  const firstNonEmpty = (code: string): string | null => {
+    const entry = results.find((r) => r.iso_3166_1 === code);
+    const found = entry?.release_dates.find((d) => d.certification.trim().length > 0);
+    return found ? found.certification.trim() : null;
+  };
+
+  for (const code of CERTIFICATION_PREFERENCE) {
+    const value = firstNonEmpty(code);
+    if (value) return value;
+  }
+
+  for (const entry of results) {
+    const found = entry.release_dates.find((d) => d.certification.trim().length > 0);
+    if (found) return found.certification.trim();
+  }
+
+  return null;
 }
 
 async function fetchPopularMovies(page: number): Promise<TMDBResponse> {
@@ -222,9 +318,19 @@ async function clearMovies(): Promise<void> {
   console.log('  Clearing existing movies...');
   await pool.query('DELETE FROM movie_genres');
   await pool.query('DELETE FROM movie_countries');
+  await pool.query('DELETE FROM movie_keywords');
   await pool.query('DELETE FROM user_picks');
   await pool.query('DELETE FROM movies');
   console.log('  ✓ Movies cleared\n');
+}
+
+/** Tablodaki her filmin TMDB kimliği, id sırasıyla. `--refresh` bunun
+ *  üzerinden yürüyor. */
+async function getAllTmdbIds(): Promise<number[]> {
+  const result = await pool.query<{ tmdb_id: number }>(
+    'SELECT tmdb_id FROM movies ORDER BY id'
+  );
+  return result.rows.map((r) => r.tmdb_id);
 }
 
 async function getExistingMovieCount(): Promise<number> {
@@ -258,18 +364,31 @@ async function upsertMovie(movie: TMDBMovie, minVotes: number): Promise<number |
     return null;
   }
 
+  // ON CONFLICT DO UPDATE — asla INSERT-only değil, çünkü bu betik zenginleştirme
+  // için mevcut satırların üzerinden ikinci kez geçiyor. `id` korunur.
   const result = await pool.query<{ id: number }>(
     `INSERT INTO movies (
       tmdb_id, title, original_title, year, runtime, synopsis,
-      poster_path, vote_average, vote_count, original_language, adult
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      poster_path, vote_average, vote_count, original_language, adult,
+      backdrop_path, tagline, imdb_id, popularity, status, certification, directors
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+              $12, $13, $14, $15, $16, $17, $18)
     ON CONFLICT (tmdb_id) DO UPDATE SET
       title = EXCLUDED.title,
       runtime = EXCLUDED.runtime,
       synopsis = EXCLUDED.synopsis,
       poster_path = EXCLUDED.poster_path,
       vote_average = EXCLUDED.vote_average,
-      vote_count = EXCLUDED.vote_count
+      vote_count = EXCLUDED.vote_count,
+      backdrop_path = EXCLUDED.backdrop_path,
+      tagline = EXCLUDED.tagline,
+      imdb_id = EXCLUDED.imdb_id,
+      popularity = EXCLUDED.popularity,
+      status = EXCLUDED.status,
+      -- COALESCE: TMDB bazen bu ikisini boş döndürüyor. Boş bir yanıt yüzünden
+      -- daha önce doğru toplanmış bir değeri silmenin anlamı yok.
+      certification = COALESCE(EXCLUDED.certification, movies.certification),
+      directors = COALESCE(EXCLUDED.directors, movies.directors)
     RETURNING id`,
     [
       movie.id,
@@ -283,45 +402,166 @@ async function upsertMovie(movie: TMDBMovie, minVotes: number): Promise<number |
       movie.vote_count,
       movie.original_language,
       movie.adult,
+      movie.backdrop_path || null,
+      movie.tagline?.trim() || null,
+      movie.imdb_id || null,
+      movie.popularity ?? null,
+      movie.status || null,
+      extractCertification(movie),
+      extractDirectors(movie),
     ]
   );
 
   return result.rows[0].id;
 }
 
+// Junction tablolarına satır başına bir sorgu atmak yerel veritabanında
+// önemsizdi; uzak bir Postgres'te her sorgu bir gidiş-dönüş demek. 2.129 filmi
+// yenilerken bu, on binlerce gidiş-dönüşe ve saatlere dönüşüyor. Hepsi tek
+// çok satırlı INSERT'e indirildi.
 async function linkMovieGenres(movieId: number, genreIds: number[]): Promise<void> {
-  for (const genreId of genreIds) {
-    await pool.query(
-      `INSERT INTO movie_genres (movie_id, genre_id)
-       VALUES ($1, $2)
-       ON CONFLICT DO NOTHING`,
-      [movieId, genreId]
-    );
-  }
+  if (genreIds.length === 0) return;
+  await pool.query(
+    `INSERT INTO movie_genres (movie_id, genre_id)
+     SELECT $1, unnest($2::int[])
+     ON CONFLICT DO NOTHING`,
+    [movieId, genreIds]
+  );
+}
+
+async function linkMovieKeywords(
+  movieId: number,
+  keywords: { id: number; name: string }[]
+): Promise<void> {
+  if (keywords.length === 0) return;
+
+  const ids = keywords.map((k) => k.id);
+  const names = keywords.map((k) => k.name);
+
+  // Anahtar kelime sözlüğü paylaşılıyor: aynı "time travel" binlerce filmde
+  // geçiyor, her seferinde yeniden yazmak yerine upsert.
+  await pool.query(
+    `INSERT INTO keywords (id, name)
+     SELECT * FROM unnest($1::int[], $2::text[])
+     ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name`,
+    [ids, names]
+  );
+  await pool.query(
+    `INSERT INTO movie_keywords (movie_id, keyword_id)
+     SELECT $1, unnest($2::int[])
+     ON CONFLICT DO NOTHING`,
+    [movieId, ids]
+  );
 }
 
 async function linkMovieCountries(
   movieId: number,
   countries: { iso_3166_1: string }[]
 ): Promise<void> {
-  for (const country of countries) {
-    await pool.query(
-      `INSERT INTO movie_countries (movie_id, country_code)
-       SELECT $1, code FROM countries WHERE code = $2
-       ON CONFLICT DO NOTHING`,
-      [movieId, country.iso_3166_1]
-    );
-  }
+  if (countries.length === 0) return;
+  const codes = countries.map((c) => c.iso_3166_1);
+  // `countries` tablosunda 40 ülke var; listede olmayan bir kod sessizce düşer.
+  await pool.query(
+    `INSERT INTO movie_countries (movie_id, country_code)
+     SELECT $1, c.code FROM countries c WHERE c.code = ANY($2)
+     ON CONFLICT DO NOTHING`,
+    [movieId, codes]
+  );
 }
 
 // ============================================================================
 // Main Seed Function
 // ============================================================================
 
+/**
+ * Mevcut satırları TMDB'den yeniden çekip zenginleştirme sütunlarını doldurur.
+ *
+ * Yeni film eklemez ve hiçbir `movies.id` değişmez — sorgu tablodan gelen
+ * `tmdb_id` üzerinden gidiyor ve upsert `ON CONFLICT (tmdb_id) DO UPDATE`
+ * olduğu için satır yerinde güncelleniyor.
+ */
+async function refresh(): Promise<void> {
+  const tmdbIds = await getAllTmdbIds();
+
+  console.log(`
+╔══════════════════════════════════════════════════════════════════════╗
+║                 🎬 Muse Movie Seeder — refresh                       ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+  Tablodaki film sayısı: ${tmdbIds.length}
+  Yeni film eklenmeyecek, hiçbir id değişmeyecek.
+`);
+
+  const progress: SeedProgress = {
+    processed: 0,
+    inserted: 0,
+    skipped: 0,
+    errors: 0,
+    startTime: Date.now(),
+  };
+
+  for (const tmdbId of tmdbIds) {
+    progress.processed++;
+    try {
+      await sleep(RATE_LIMIT_DELAY);
+      const details = await fetchMovieDetails(tmdbId);
+
+      // Kalite eşiği burada geçersiz: bu film zaten kütüphanede. Oy sayısı
+      // zamanla eşiğin altına düşmüş olsa bile verisini tazelemek istiyoruz;
+      // hangi filmlerin kullanıcıya gösterileceğine sorgu anındaki eşikler
+      // karar veriyor, seed değil.
+      const movieId = await upsertMovie(details, 0);
+      if (movieId) {
+        progress.inserted++;
+        if (details.genres) {
+          await linkMovieGenres(movieId, details.genres.map((g) => g.id));
+        }
+        if (details.production_countries) {
+          await linkMovieCountries(movieId, details.production_countries);
+        }
+        if (details.keywords?.keywords?.length) {
+          await linkMovieKeywords(movieId, details.keywords.keywords);
+        }
+      } else {
+        progress.skipped++;
+      }
+    } catch {
+      progress.errors++;
+    }
+
+    printProgress(progress, tmdbIds.length);
+  }
+
+  const elapsed = Date.now() - progress.startTime;
+  const enriched = await pool.query<{ n: string }>(
+    "SELECT count(*) n FROM movies WHERE directors IS NOT NULL"
+  );
+
+  console.log(`\n
+╔══════════════════════════════════════════════════════════════════════╗
+║                        Refresh Complete! 🎉                          ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+  ✓ Güncellenen:      ${progress.inserted}
+  ⊘ Atlanan:          ${progress.skipped}
+  ✗ Hata:             ${progress.errors}
+  ⏱  Süre:            ${formatDuration(elapsed)}
+
+  📊 Yönetmeni olan film sayısı: ${enriched.rows[0].n}
+`);
+
+  await pool.end();
+}
+
 async function seed(options: SeedOptions): Promise<void> {
   if (!config.tmdbApiKey) {
     console.error('\n  ❌ Error: TMDB_API_KEY is not set in .env\n');
     process.exit(1);
+  }
+
+  if (options.refresh) {
+    await refresh();
+    return;
   }
 
   printBanner(options);
@@ -396,6 +636,11 @@ async function seed(options: SeedOptions): Promise<void> {
               // Link countries
               if (details.production_countries) {
                 await linkMovieCountries(movieId, details.production_countries);
+              }
+
+              // Link keywords
+              if (details.keywords?.keywords?.length) {
+                await linkMovieKeywords(movieId, details.keywords.keywords);
               }
             } else {
               progress.skipped++;
