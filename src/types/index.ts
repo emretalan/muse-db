@@ -33,12 +33,12 @@ export interface Genre {
   name: string;
 }
 
-export type Era = '1980-1989' | '1990-1999' | '2000-2009' | '2010-2019' | '2020-now';
+export type Era = 'pre-1980' | '1980-1989' | '1990-1999' | '2000-2009' | '2010-2019' | '2020-now';
 
 export interface PickFilters {
-  genreIds?: number[];
+  genreIds?: number[] | number;
   era?: Era;
-  origin?: string[];
+  origin?: string[] | string;
   minDuration?: number;
   maxDuration?: number;
 }
@@ -46,6 +46,9 @@ export interface PickFilters {
 export interface PickRequest {
   sessionId: string;
   filters: PickFilters;
+  /** Movie ids the caller never wants back — e.g. titles already watched.
+   *  Merged with the session's own recent picks. Mirrors `/candidates`. */
+  excludeMovieIds?: number[];
 }
 
 export interface PickResponse {

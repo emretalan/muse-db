@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { getTmdbId } from '../db/queries.js';
+import { getMovieSynopsis, getTmdbId } from '../db/queries.js';
 import { config } from '../config.js';
 
 interface SynopsisParams {
@@ -42,12 +42,19 @@ export async function synopsisRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.status(400).send({ error: 'Invalid movie ID' });
       }
 
-      // Don't bother calling TMDB for English — the DB already has it
-      if (lang === 'en') {
-        return { synopsis: null };
+      const requestedLang = (lang || 'en').trim();
+      const normalizedLang = requestedLang.toLowerCase();
+      const dbSynopsis = await getMovieSynopsis(movieId);
+
+      // Return the database synopsis immediately for English, or when the DB already provides a usable value.
+      if (normalizedLang === 'en') {
+        return { synopsis: dbSynopsis };
       }
 
-      const tmdbLocale = LOCALE_MAP[lang] || `${lang}-${lang.toUpperCase()}`;
+      const tmdbLocale =
+        LOCALE_MAP[requestedLang] ||
+        LOCALE_MAP[normalizedLang] ||
+        `${normalizedLang}-${normalizedLang.toUpperCase()}`;
       const cacheKey = `${movieId}:${tmdbLocale}`;
 
       // Check cache first
@@ -62,6 +69,11 @@ export async function synopsisRoutes(fastify: FastifyInstance): Promise<void> {
         if (!tmdbId) {
           return reply.status(404).send({ error: 'Movie not found' });
         }
+
+        // Note: dbSynopsis is the English text and must NOT short-circuit here.
+        // Almost every movie has one, so returning it would skip the TMDB call
+        // for every non-English caller — which is exactly what used to happen.
+        // It stays the client-side fallback when TMDB has no translation.
 
         if (!config.tmdbApiKey) {
           request.log.warn('TMDB_API_KEY not configured — cannot fetch localized synopsis');

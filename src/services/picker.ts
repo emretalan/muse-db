@@ -53,13 +53,16 @@ function toMovie(row: MovieRow, genres: string[]): Movie {
 // Main pick function
 export async function pickMovie(
   sessionId: string,
-  filters: PickFilters
+  filters: PickFilters,
+  excludeMovieIds: number[] = []
 ): Promise<Movie | null> {
   // Step 1: Get recently picked movie IDs to exclude
   const recentPickIds = await getRecentPickMovieIds(sessionId);
 
-  // Step 2: Fetch candidate movies
-  const candidates = await getCandidateMovies(filters, recentPickIds);
+  // Step 2: Fetch candidate movies. A shared pact passes both participants'
+  // watched lists, so neither is handed a film they have already seen.
+  const excludeIds = [...new Set([...recentPickIds, ...excludeMovieIds])];
+  const candidates = await getCandidateMovies(filters, excludeIds);
 
   if (candidates.length === 0) {
     return null;

@@ -5,6 +5,8 @@ import { config } from '../config.js';
 // Era to year range mapping
 function eraToYearRange(era: Era): { start: number; end: number | null } {
   const ranges: Record<Era, { start: number; end: number | null }> = {
+    // Open-ended at the bottom: the library goes back to the 1940s.
+    'pre-1980': { start: 0, end: 1979 },
     '1980-1989': { start: 1980, end: 1989 },
     '1990-1999': { start: 1990, end: 1999 },
     '2000-2009': { start: 2000, end: 2009 },
@@ -26,6 +28,23 @@ export async function getCandidateMovies(
   excludeMovieIds: number[]
 ): Promise<MovieRow[]> {
   const { minVoteCount, minVoteAverage, minRuntime } = config.selection;
+
+  const normalizedOrigin =
+    typeof filters.origin === 'string'
+      ? filters.origin
+          .split(',')
+          .map((value) => value.trim().toLowerCase())
+          .filter(Boolean)
+      : Array.isArray(filters.origin)
+        ? filters.origin.map((value) => value.trim().toLowerCase()).filter(Boolean)
+        : [];
+
+  const normalizedGenreIds =
+    typeof filters.genreIds === 'number'
+      ? [filters.genreIds]
+      : Array.isArray(filters.genreIds)
+        ? filters.genreIds
+        : [];
 
   const conditions: string[] = [
     'm.adult = false',
@@ -67,9 +86,9 @@ export async function getCandidateMovies(
   }
 
   // Origin (language) filter
-  if (filters.origin && filters.origin.length > 0) {
+  if (normalizedOrigin.length > 0) {
     conditions.push(`m.original_language = ANY($${paramIndex})`);
-    params.push(filters.origin.map(o => o.toLowerCase()));
+    params.push(normalizedOrigin);
     paramIndex++;
   }
 
@@ -82,12 +101,12 @@ export async function getCandidateMovies(
 
   // Genre filter (if specified)
   let genreJoin = '';
-  if (filters.genreIds && filters.genreIds.length > 0) {
+  if (normalizedGenreIds.length > 0) {
     genreJoin = `
       INNER JOIN movie_genres mg ON m.id = mg.movie_id
     `;
     conditions.push(`mg.genre_id = ANY($${paramIndex})`);
-    params.push(filters.genreIds);
+    params.push(normalizedGenreIds);
     paramIndex++;
   }
 
@@ -213,6 +232,17 @@ export async function healthCheck(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// Fetch a movie synopsis from the local database
+export async function getMovieSynopsis(movieId: number): Promise<string | null> {
+  const result = await pool.query<{ synopsis: string | null }>(
+    'SELECT synopsis FROM movies WHERE id = $1',
+    [movieId]
+  );
+
+  const synopsis = result.rows[0]?.synopsis ?? null;
+  return synopsis && synopsis.trim().length > 0 ? synopsis.trim() : null;
 }
 
 // Get TMDB ID for a movie by internal ID

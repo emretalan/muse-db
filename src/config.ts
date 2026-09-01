@@ -21,8 +21,10 @@ export const config = {
     firstPickTopPercentile: 0.3,
   },
 
-  // TMDB image base URL
+  // TMDB image base URLs
   tmdbImageBaseUrl: 'https://image.tmdb.org/t/p/w500',
+  // Provider logos are small chips — w500 would be ~25x oversized
+  tmdbLogoBaseUrl: 'https://image.tmdb.org/t/p/w92',
 } as const;
 
 export function validateConfig(): void {

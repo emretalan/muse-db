@@ -6,7 +6,18 @@ export async function pickRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.post<{ Body: PickRequest; Reply: PickResponse | { error: string } }>(
     '/pick',
     async (request, reply) => {
-      const { sessionId, filters } = request.body;
+      const body = request.body;
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return reply.status(400).send({
+          error: 'Request body must be an object.',
+        });
+      }
+
+      const { sessionId, filters, excludeMovieIds } = body as PickRequest;
+      const safeFilters = filters || {};
+      const safeExcludeIds = Array.isArray(excludeMovieIds)
+        ? excludeMovieIds.filter((id) => Number.isInteger(id))
+        : [];
 
       // Validate session ID (accepts Firebase UIDs or UUIDs)
       if (!sessionId || typeof sessionId !== 'string' || sessionId.length < 1 || sessionId.length > 255) {
@@ -16,26 +27,30 @@ export async function pickRoutes(fastify: FastifyInstance): Promise<void> {
       }
 
       // Validate filters
-      if (filters.minDuration !== undefined && filters.minDuration < 60) {
+      if (safeFilters.minDuration !== undefined && safeFilters.minDuration < 60) {
         return reply.status(400).send({
           error: 'minDuration must be at least 60 minutes.',
         });
       }
 
-      if (filters.maxDuration !== undefined && filters.maxDuration < 60) {
+      if (safeFilters.maxDuration !== undefined && safeFilters.maxDuration < 60) {
         return reply.status(400).send({
           error: 'maxDuration must be at least 60 minutes.',
         });
       }
 
-      if (filters.genreIds !== undefined && !Array.isArray(filters.genreIds)) {
+      if (
+        safeFilters.genreIds !== undefined &&
+        !Array.isArray(safeFilters.genreIds) &&
+        typeof safeFilters.genreIds !== 'number'
+      ) {
         return reply.status(400).send({
-          error: 'genreIds must be an array.',
+          error: 'genreIds must be a number or an array of numbers.',
         });
       }
 
       try {
-        const movie = await pickMovie(sessionId, filters || {});
+        const movie = await pickMovie(sessionId, safeFilters, safeExcludeIds);
 
         if (!movie) {
           return {
