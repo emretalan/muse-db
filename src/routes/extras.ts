@@ -3,6 +3,7 @@ import {
   getCollectionSiblings,
   getMovieCast,
   getMoviesTitles,
+  getSameDirector,
   getSimilarTitles,
 } from '../db/queries.js';
 import type { CastMember } from '../db/queries.js';
@@ -33,6 +34,9 @@ interface TitleCard {
 interface ExtrasResponse {
   cast: PersonCard[];
   collection: { name: string; films: TitleCard[] } | null;
+  /** Aynı yönetmenin diğer yapımları. `names` şerit başlığı için — bir
+   *  filmin birden fazla yönetmeni olabiliyor. */
+  director: { names: string[]; films: TitleCard[] } | null;
   similar: TitleCard[];
 }
 
@@ -61,9 +65,10 @@ export async function extrasRoutes(fastify: FastifyInstance): Promise<void> {
     const language = normalizeLanguage(request.query.lang);
 
     try {
-      const [cast, collection, similar] = await Promise.all([
+      const [cast, collection, director, similar] = await Promise.all([
         getMovieCast(id),
         getCollectionSiblings(id),
+        getSameDirector(id),
         getSimilarTitles(id),
       ]);
 
@@ -71,6 +76,7 @@ export async function extrasRoutes(fastify: FastifyInstance): Promise<void> {
       // başlık gösterirken bu iki listenin İngilizce kalması tutarsız olurdu.
       const relatedIds = [
         ...(collection?.films.map((f) => f.id) ?? []),
+        ...(director?.films.map((f) => f.id) ?? []),
         ...similar.map((s) => s.id),
       ];
       const titles = await getMoviesTitles(relatedIds, language);
@@ -94,6 +100,9 @@ export async function extrasRoutes(fastify: FastifyInstance): Promise<void> {
         })),
         collection: collection
           ? { name: collection.name, films: collection.films.map(card) }
+          : null,
+        director: director
+          ? { names: director.names, films: director.films.map(card) }
           : null,
         similar: similar.map(card),
       };

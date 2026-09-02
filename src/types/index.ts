@@ -105,7 +105,28 @@ export interface PickFilters {
   originCountries?: string[] | string;
   minDuration?: number;
   maxDuration?: number;
+
+  // --- İnce ayar katmanı (013_refinement) ---
+
+  /** Ruh hâli slug'ları (`"cozy"`, `"dread"` — bkz. `services/moods.ts`).
+   *  Birden fazlası VEYA ile birleşiyor: iki ruh hâli seçmek "ikisinden biri"
+   *  demek, "ikisi birden" değil — kesişim çoğu bileşimde boş çıkıyor. */
+  moods?: string[] | string;
+  /** Yaş tavanı. `age_rating` bu değerden büyük olan **ve hiç
+   *  sınıflandırılmamış** başlıklar eleniyor; gerekçesi `services/ratings.ts`
+   *  içinde. */
+  maxAge?: number;
+  /** Bilinirlik kadranı. `famous` herkesin bildiklerini, `hidden` kimsenin
+   *  bakmadıklarını getiriyor; verilmezse ikisi de. */
+  popularity?: Popularity;
+  /** Yayıncı kovası slug'ları (`"netflix"` — bkz. `services/networks.ts`).
+   *  Yalnız dizide anlamlı; film satırlarında `networks` boş. */
+  networks?: string[] | string;
 }
+
+/** Bilinirlik kadranının durakları. Ortada durak yok: filtrenin kapalı hâli
+ *  zaten "fark etmez". */
+export type Popularity = 'famous' | 'hidden';
 
 export interface PickRequest {
   sessionId: string;

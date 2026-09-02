@@ -3,6 +3,9 @@ import type { MovieRow, Genre, PickFilters, Era, MediaType } from '../types/inde
 import { config } from '../config.js';
 import { expandOrigin, ORIGIN_BUCKETS } from '../services/origins.js';
 import { TIER_ONE_LANGUAGE, TIER_TWO_SQL } from '../services/languages.js';
+import { MOOD_SLUGS } from '../services/moods.js';
+import { NETWORK_BUCKETS, expandNetworks } from '../services/networks.js';
+import { AGE_CEILINGS } from '../services/ratings.js';
 
 // Era to year range mapping
 function eraToYearRange(era: Era): { start: number; end: number | null } {
@@ -53,7 +56,15 @@ function buildCandidateQuery(
    *  dışındaki tüm filtreleri paylaşan bir taban sorguya ihtiyaç duyuyor:
    *  "tür seçilmemişken her türde ne var", "dönem seçilmemişken her dönemde
    *  ne var". */
-  options: { skipOrigin?: boolean; skipEra?: boolean; skipGenres?: boolean } = {}
+  options: {
+    skipOrigin?: boolean;
+    skipEra?: boolean;
+    skipGenres?: boolean;
+    skipMoods?: boolean;
+    skipAge?: boolean;
+    skipPopularity?: boolean;
+    skipNetworks?: boolean;
+  } = {}
 ): { fromAndWhere: string; params: unknown[] } {
   const {
     minVoteCount,
@@ -65,6 +76,10 @@ function buildCandidateQuery(
     minVoteAverage,
     minRuntime,
     minRuntimeTv,
+    famousVotes,
+    famousVotesTv,
+    hiddenVotes,
+    hiddenVotesTv,
   } = config.selection;
 
   // Belirtilmemişse film. Yayındaki istemciler bu alanı göndermiyor ve
@@ -177,6 +192,45 @@ function buildCandidateQuery(
     }
     if (originClauses.length > 0) {
       conditions.push(`(${originClauses.join(' OR ')})`);
+    }
+  }
+
+  // Ruh hâli: seçilenlerden **herhangi biri** yeterli. Kesişim istemek
+  // ("hem hafif hem ağlatan") çoğu bileşimde sıfır döndürür ve kullanıcı
+  // ikinci kutuya dokunduğu anda töreni çıkmaza sokar.
+  const normalizedMoods = normalizeList(filters.moods).filter((m) =>
+    MOOD_SLUGS.includes(m)
+  );
+  if (normalizedMoods.length > 0 && !options.skipMoods) {
+    conditions.push(`m.moods && $${paramIndex}`);
+    params.push(normalizedMoods);
+    paramIndex++;
+  }
+
+  // Yaş tavanı. `age_rating IS NULL` de eleniyor: "çocukla izlenir" diyen
+  // kişiye "bilmiyoruz" göndermek sorunun cevabı değil.
+  if (filters.maxAge && !options.skipAge) {
+    conditions.push(`m.age_rating IS NOT NULL AND m.age_rating <= $${paramIndex}`);
+    params.push(filters.maxAge);
+    paramIndex++;
+  }
+
+  // Bilinirlik. Eşikler medya türüne göre; gerekçesi config.selection içinde.
+  if (filters.popularity && !options.skipPopularity) {
+    if (filters.popularity === 'famous') {
+      conditions.push(`m.vote_count >= ${isTv ? famousVotesTv : famousVotes}`);
+    } else if (filters.popularity === 'hidden') {
+      conditions.push(`m.vote_count < ${isTv ? hiddenVotesTv : hiddenVotes}`);
+    }
+  }
+
+  // Yayıncı. Kova slug'ı kanal adlarına açılıyor; tanınmayan slug düşüyor.
+  if (!options.skipNetworks) {
+    const networkNames = expandNetworks(normalizeList(filters.networks));
+    if (networkNames.length > 0) {
+      conditions.push(`m.networks && $${paramIndex}`);
+      params.push(networkNames);
+      paramIndex++;
     }
   }
 
@@ -376,6 +430,99 @@ export async function countEraFacets(
   return counts;
 }
 
+/**
+ * İnce ayar ekranının bütün sayımları — tek çağrıda.
+ *
+ * Dört boyut var (ruh hâli, yaş, bilinirlik, yayıncı) ve her biri **kendi**
+ * boyutu dışındaki filtreleri paylaşan bir taban sorgu istiyor: "ruh hâli
+ * seçilmemişken her ruh hâlinde ne var". Bu yüzden dört ayrı sorgu, ama
+ * paralel ve tek HTTP gidiş dönüşünde — ekran hepsini birden çiziyor.
+ *
+ * Anahtarlar tek bir haritada toplanıyor ve çakışmıyorlar: ruh hâli slug'ları
+ * (`cozy`), yaş tavanları (`age:12`), bilinirlik (`famous`) ve yayıncı
+ * kovaları (`net:netflix`) ayrı ad alanlarında.
+ */
+export async function countRefinementFacets(
+  filters: PickFilters,
+  excludeMovieIds: number[]
+): Promise<FacetCounts> {
+  const isTv = filters.mediaType === 'tv';
+  const { famousVotes, famousVotesTv, hiddenVotes, hiddenVotesTv } = config.selection;
+
+  const moodQuery = () => {
+    const { fromAndWhere, params } = buildCandidateQuery(filters, excludeMovieIds, {
+      skipMoods: true,
+    });
+    const selects = MOOD_SLUGS.map(
+      (slug) => `COUNT(DISTINCT m.id) FILTER (WHERE '${slug}' = ANY(m.moods)) AS "${slug}"`
+    );
+    selects.push('COUNT(DISTINCT m.id) AS any');
+    return pool.query<Record<string, string>>(
+      `SELECT ${selects.join(', ')} ${fromAndWhere}`,
+      params
+    );
+  };
+
+  const ageQuery = () => {
+    const { fromAndWhere, params } = buildCandidateQuery(filters, excludeMovieIds, {
+      skipAge: true,
+    });
+    const selects = AGE_CEILINGS.map(
+      (age) =>
+        `COUNT(DISTINCT m.id) FILTER (WHERE m.age_rating IS NOT NULL AND m.age_rating <= ${age}) AS "age:${age}"`
+    );
+    return pool.query<Record<string, string>>(
+      `SELECT ${selects.join(', ')} ${fromAndWhere}`,
+      params
+    );
+  };
+
+  const popularityQuery = () => {
+    const { fromAndWhere, params } = buildCandidateQuery(filters, excludeMovieIds, {
+      skipPopularity: true,
+    });
+    return pool.query<Record<string, string>>(
+      `SELECT COUNT(DISTINCT m.id) FILTER (WHERE m.vote_count >= ${isTv ? famousVotesTv : famousVotes}) AS famous,
+              COUNT(DISTINCT m.id) FILTER (WHERE m.vote_count <  ${isTv ? hiddenVotesTv : hiddenVotes}) AS hidden
+         ${fromAndWhere}`,
+      params
+    );
+  };
+
+  const networkQuery = () => {
+    const { fromAndWhere, params } = buildCandidateQuery(filters, excludeMovieIds, {
+      skipNetworks: true,
+    });
+    const selects: string[] = [];
+    for (const bucket of NETWORK_BUCKETS) {
+      params.push(bucket.names);
+      selects.push(
+        `COUNT(DISTINCT m.id) FILTER (WHERE m.networks && $${params.length}) AS "net:${bucket.slug}"`
+      );
+    }
+    return pool.query<Record<string, string>>(
+      `SELECT ${selects.join(', ')} ${fromAndWhere}`,
+      params
+    );
+  };
+
+  // Yayıncı yalnız dizide anlamlı — film satırlarında `networks` her zaman
+  // boş, ve sekiz kutu için sekiz sıfır saymanın maliyeti var.
+  const results = await Promise.all(
+    isTv
+      ? [moodQuery(), ageQuery(), popularityQuery(), networkQuery()]
+      : [moodQuery(), ageQuery(), popularityQuery()]
+  );
+
+  const counts: FacetCounts = {};
+  for (const result of results) {
+    for (const [key, value] of Object.entries(result.rows[0] ?? {})) {
+      counts[key] = parseInt(value, 10) || 0;
+    }
+  }
+  return counts;
+}
+
 /** Detay ekranının alt yarısı: kadro, seri ve benzerler. */
 export interface CastMember {
   personId: number;
@@ -515,6 +662,62 @@ export async function getSimilarTitles(
     posterPath: r.poster_path,
     shared: parseInt(r.shared, 10),
   }));
+}
+
+/**
+ * Aynı yönetmenin kütüphanedeki diğer yapımları.
+ *
+ * Kadro ve seri şeritlerinin yanına üçüncü bir keşif ekseni. `movies.directors`
+ * 008 ile geldi ve bugüne kadar yalnızca ekranda bir isim yazdırmak için
+ * kullanılıyordu; oysa 14.582 filmin hepsinde dolu ve bir dizi olduğu için
+ * kesişim operatörüyle (`&&`) doğrudan sorgulanabiliyor.
+ *
+ * Ayrı bir `people` tablosu hâlâ kurulmuyor: isim eşleşmesi TMDB'nin kendi
+ * yazımına güveniyor ve aynı yönetmen her satırda aynı yazılıyor. Kişi
+ * kimliğine ihtiyaç, filmografi ekranı geldiğinde doğar.
+ *
+ * Ortak yapımlarda birden fazla yönetmen olabiliyor (Coen kardeşler); şerit
+ * başlığı için hepsi dönüyor.
+ */
+export async function getSameDirector(
+  movieId: number,
+  limit = 12
+): Promise<{ names: string[]; films: CollectionSibling[] } | null> {
+  const own = await pool.query<{ directors: string[] | null }>(
+    'SELECT directors FROM movies WHERE id = $1',
+    [movieId]
+  );
+  const directors = own.rows[0]?.directors;
+  if (!directors || directors.length === 0) return null;
+
+  const result = await pool.query<{
+    id: number;
+    title: string;
+    year: number;
+    poster_path: string | null;
+  }>(
+    `SELECT m.id, m.title, m.year, m.poster_path
+       FROM movies m
+      WHERE m.id <> $1
+        AND m.directors && $2
+        AND m.media_type = (SELECT media_type FROM movies WHERE id = $1)
+        AND m.poster_path IS NOT NULL
+      ORDER BY m.vote_count DESC
+      LIMIT $3`,
+    [movieId, directors, limit]
+  );
+
+  if (result.rows.length === 0) return null;
+
+  return {
+    names: directors,
+    films: result.rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      year: r.year,
+      posterPath: r.poster_path,
+    })),
+  };
 }
 
 /** Verilen filmlerin istenen dildeki başlıkları. Çevirisi olmayan film

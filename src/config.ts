@@ -43,6 +43,17 @@ export const config = {
     // "Söz ilk bölüm üzerinedir" kararı gereği dizi satırlarındaki `runtime`
     // ilk bölümün süresi, ve filtre onun üzerinde çalışıyor.
     minRuntimeTv: 10,
+    // Bilinirlik kadranının durakları — görünür kataloğun oy dağılımından
+    // ölçüldü. Filmde medyan 547 oy, %85'lik dilim 2.637; dizide 138 ve 696.
+    // "Herkesin bildikleri" üst %15, "kimsenin bakmadıkları" alt üçte bir.
+    //
+    // Dizi için ayrı değerler şart: aynı tanınırlıktaki bir dizi TMDB'de
+    // filmden belirgin şekilde daha az oy topluyor, ve film eşiği diziye
+    // uygulanırsa "herkesin bildikleri" kutusu 300 diziye düşüyor.
+    famousVotes: 2500,
+    famousVotesTv: 700,
+    hiddenVotes: 250,
+    hiddenVotesTv: 70,
     recentPicksLimit: 20,
     firstPickTopPercentile: 0.3,
   },

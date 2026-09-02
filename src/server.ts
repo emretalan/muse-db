@@ -12,6 +12,7 @@ import { originRoutes } from './routes/origins.js';
 import { eraRoutes } from './routes/eras.js';
 import { movieRoutes } from './routes/movie.js';
 import { extrasRoutes } from './routes/extras.js';
+import { refineRoutes } from './routes/refine.js';
 
 export function buildServer() {
   const fastify = Fastify({
@@ -74,6 +75,7 @@ export function buildServer() {
   // `/movies/:id/extras` statik son segment taşıdığı için `/movies/:id` onu
   // gölgelemiyor.
   fastify.register(extrasRoutes);
+  fastify.register(refineRoutes);
 
   return fastify;
 }
