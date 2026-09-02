@@ -14,16 +14,17 @@ export const config = {
 
   // Selection algorithm constants
   selection: {
-    minVoteCount: 500,
-    // TMDB'nin oy tabanı ezici çoğunlukla İngilizce konuşuyor, o yüzden tek
-    // bir oy eşiği İngilizce olmayan sinemayı orantısız eliyor: 200 oy almış
-    // bir Türk filmi, kendi izleyicisi içinde 2.000 oy almış İngilizce bir
-    // film kadar tanınmış demek. Tek eşikle kütüphanedeki Japon filmlerinin
-    // üçte biri, Türk filmlerinin yarısı hiç gösterilmiyordu.
+    // Oy eşikleri üç kademeli; kademelerin dil üyeliği ve gerekçesi
+    // `services/languages.ts` içinde (TIER_TWO_LANGUAGES).
     //
     // İngilizce tarafı 500'de kalıyor — mevcut kullanıcıların gördüğü havuzun
     // %96'sı orası ve kalitesi düşmüyor.
+    minVoteCount: 500,
+    // Kademe 2 (fr, it, ja, es): TMDB'de havuzu geniş olan diller.
     minVoteCountNonEnglish: 150,
+    // Kademe 3 (geri kalan her dil): havuzun kendisi zaten dar. 150 eşiği
+    // Türkçe için TMDB'de yalnızca 39 film bırakıyordu; 50 ile 241 oluyor.
+    minVoteCountTierThree: 50,
 
     // Diziler ayrı eşikler istiyor: TMDB'de bir dizi, aynı tanınırlıktaki bir
     // filmden belirgin şekilde daha az oy topluyor. Film eşikleri dizide
@@ -35,6 +36,7 @@ export const config = {
     // dönem taramaları 200, bölge taramaları 50-100.
     minVoteCountTv: 200,
     minVoteCountTvNonEnglish: 50,
+    minVoteCountTvTierThree: 20,
     minVoteAverage: 5.5,
     minRuntime: 60,
     // Bir bölüm için 60 dakika anlamsız — bir sitcom bölümü 22 dakika.

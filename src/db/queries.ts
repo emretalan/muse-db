@@ -2,6 +2,7 @@ import { pool } from './client.js';
 import type { MovieRow, Genre, PickFilters, Era, MediaType } from '../types/index.js';
 import { config } from '../config.js';
 import { expandOrigin, ORIGIN_BUCKETS } from '../services/origins.js';
+import { TIER_ONE_LANGUAGE, TIER_TWO_SQL } from '../services/languages.js';
 
 // Era to year range mapping
 function eraToYearRange(era: Era): { start: number; end: number | null } {
@@ -55,8 +56,10 @@ function buildCandidateQuery(
   const {
     minVoteCount,
     minVoteCountNonEnglish,
+    minVoteCountTierThree,
     minVoteCountTv,
     minVoteCountTvNonEnglish,
+    minVoteCountTvTierThree,
     minVoteAverage,
     minRuntime,
     minRuntimeTv,
@@ -68,7 +71,8 @@ function buildCandidateQuery(
   const mediaType: MediaType = filters.mediaType === 'tv' ? 'tv' : 'movie';
   const isTv = mediaType === 'tv';
   const voteFloorEnglish = isTv ? minVoteCountTv : minVoteCount;
-  const voteFloorOther = isTv ? minVoteCountTvNonEnglish : minVoteCountNonEnglish;
+  const voteFloorTierTwo = isTv ? minVoteCountTvNonEnglish : minVoteCountNonEnglish;
+  const voteFloorTierThree = isTv ? minVoteCountTvTierThree : minVoteCountTierThree;
 
   // Menşe artık bir kova slug'ı ("europe") olarak da gelebiliyor; `expandOrigin`
   // slug'ı dil + ülke listesine açıyor, tanımadığı değeri dil kodu sayıyor.
@@ -96,10 +100,13 @@ function buildCandidateQuery(
     'm.runtime IS NOT NULL',
     `m.media_type = '${mediaType}'`,
     `m.runtime >= ${isTv ? minRuntimeTv : minRuntime}`,
-    // Oy eşiği hem dile hem türe göre — gerekçesi config.selection'da.
+    // Oy eşiği hem dile hem türe göre, üç kademeli — kademelerin dil
+    // üyeliği ve gerekçesi services/languages.ts içinde.
     `(
-       (m.original_language = 'en'  AND m.vote_count >= ${voteFloorEnglish})
-    OR (m.original_language <> 'en' AND m.vote_count >= ${voteFloorOther})
+       (m.original_language  =  '${TIER_ONE_LANGUAGE}' AND m.vote_count >= ${voteFloorEnglish})
+    OR (m.original_language  IN (${TIER_TWO_SQL})      AND m.vote_count >= ${voteFloorTierTwo})
+    OR (m.original_language NOT IN ('${TIER_ONE_LANGUAGE}', ${TIER_TWO_SQL})
+        AND m.vote_count >= ${voteFloorTierThree})
     )`,
     `m.vote_average >= ${minVoteAverage}`,
   ];
