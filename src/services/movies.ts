@@ -12,8 +12,3 @@ export async function getGenres(): Promise<Genre[]> {
   genresCache = await getAllGenres();
   return genresCache;
 }
-
-// Clear cache (useful for testing)
-export function clearGenresCache(): void {
-  genresCache = null;
-}
