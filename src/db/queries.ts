@@ -441,6 +441,13 @@ export async function countEraFacets(
  * Anahtarlar tek bir haritada toplanıyor ve çakışmıyorlar: ruh hâli slug'ları
  * (`cozy`), yaş tavanları (`age:12`), bilinirlik (`famous`) ve yayıncı
  * kovaları (`net:netflix`) ayrı ad alanlarında.
+ *
+ * `total` anahtarı ayrı bir iş yapıyor: **bütün** filtreler uygulanmış hâlde
+ * kaç başlık kaldığı. Diğer üç sayım ucunda böyle bir değer yok çünkü onlar
+ * tek bir soru soruyor ve cevabı ekranda kart kart görünüyor; burada dört
+ * boyut birden oynuyor ve kullanıcının havuzu daralttığını görebilmesi
+ * gerekiyor. (`any` bunun yerine geçemez: o, ruh hâli hariç tutulmuş hâlin
+ * toplamı.)
  */
 export async function countRefinementFacets(
   filters: PickFilters,
@@ -508,10 +515,18 @@ export async function countRefinementFacets(
 
   // Yayıncı yalnız dizide anlamlı — film satırlarında `networks` her zaman
   // boş, ve sekiz kutu için sekiz sıfır saymanın maliyeti var.
+  const totalQuery = () => {
+    const { fromAndWhere, params } = buildCandidateQuery(filters, excludeMovieIds);
+    return pool.query<Record<string, string>>(
+      `SELECT COUNT(DISTINCT m.id) AS total ${fromAndWhere}`,
+      params
+    );
+  };
+
   const results = await Promise.all(
     isTv
-      ? [moodQuery(), ageQuery(), popularityQuery(), networkQuery()]
-      : [moodQuery(), ageQuery(), popularityQuery()]
+      ? [moodQuery(), ageQuery(), popularityQuery(), networkQuery(), totalQuery()]
+      : [moodQuery(), ageQuery(), popularityQuery(), totalQuery()]
   );
 
   const counts: FacetCounts = {};
