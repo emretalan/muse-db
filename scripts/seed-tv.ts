@@ -17,7 +17,11 @@
  */
 
 import { pool } from '../src/db/client.js';
-import { TRANSLATION_REGIONS, minVotesForLanguage } from '../src/services/languages.js';
+import {
+  TRANSLATION_REGIONS,
+  TIER_TWO_LANGUAGES,
+  minVotesForLanguage,
+} from '../src/services/languages.js';
 import { config } from '../src/config.js';
 import { LinkBuffer } from './link-buffer.js';
 
@@ -288,6 +292,22 @@ function buildSweeps(perDecade: number): Sweep[] {
       },
       target: 200,
       minVotes: TIER_THREE_MIN_VOTES,
+    });
+  }
+
+  // Kademe 2 dilleri — filmdeki eşiyle aynı gerekçe: bunlar bölge
+  // taramalarının içinde kalıyor ve o taramaların hedefi bütün bölgeye ait.
+  // Eşikleri de farklı: sorgu bu dillerden 50 oy istiyor, kademe 3'ten 20.
+  for (const language of TIER_TWO_LANGUAGES) {
+    sweeps.push({
+      label: `dil ${language}`,
+      params: {
+        sort_by: 'vote_count.desc',
+        'vote_count.gte': String(config.selection.minVoteCountTvNonEnglish),
+        with_original_language: language,
+      },
+      target: 500,
+      minVotes: config.selection.minVoteCountTvNonEnglish,
     });
   }
 

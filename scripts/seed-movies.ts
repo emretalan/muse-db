@@ -25,7 +25,11 @@
  */
 
 import { pool } from '../src/db/client.js';
-import { TRANSLATION_REGIONS, minVotesForLanguage } from '../src/services/languages.js';
+import {
+  TRANSLATION_REGIONS,
+  TIER_TWO_LANGUAGES,
+  minVotesForLanguage,
+} from '../src/services/languages.js';
 import { config } from '../src/config.js';
 import { LinkBuffer } from './link-buffer.js';
 
@@ -478,6 +482,29 @@ function buildSweeps(perDecade: number): DiscoverSweep[] {
       // kendiliğinden duruyor.
       target: 300,
       minVotes: TIER_THREE_MIN_VOTES,
+    });
+  }
+
+  // Kademe 2 dilleri de kendi taramalarını istiyor.
+  //
+  // Bunlar bölge taramalarının ("Avrupa", "Uzak Doğu") içinde kalıyordu ve o
+  // taramaların hedefi bütün bölgeye ait: Fransızca kütüphanede 383'te
+  // kalmıştı, oysa TMDB'de kuralımızın izin verdiği 1.237 film var. Aynı
+  // durum İtalyanca (222/719), Japonca (292/571) ve İspanyolca (244/475)
+  // için de geçerli.
+  //
+  // Eşik kademe 3'ünkinden farklı: bu dillerin havuzu geniş olduğu için
+  // sorgu onlardan 150 oy istiyor.
+  for (const language of TIER_TWO_LANGUAGES) {
+    sweeps.push({
+      label: `dil ${language}`,
+      params: {
+        sort_by: 'vote_count.desc',
+        'vote_count.gte': String(config.selection.minVoteCountNonEnglish),
+        with_original_language: language,
+      },
+      target: 1300,
+      minVotes: config.selection.minVoteCountNonEnglish,
     });
   }
 
