@@ -135,6 +135,31 @@ async function getStatus(): Promise<void> {
     }
   }
 
+  // İzleme sağlayıcıları. Tazeleme yaşı burada duruyor çünkü envanterdeki
+  // tek bayatlayan veri bu: bir başlık bir servisten çıkabiliyor ve tablo
+  // ancak yeniden sorulduğunda öğreniyor.
+  const providerStats = await pool.query<{
+    baslik: string;
+    satir: string;
+    servis: string;
+    en_eski: string | null;
+    hic: string;
+  }>(`
+    SELECT (SELECT count(DISTINCT movie_id) FROM movie_providers)::text AS baslik,
+           (SELECT count(*) FROM movie_providers)::text               AS satir,
+           (SELECT count(*) FROM providers)::text                     AS servis,
+           (SELECT to_char(min(providers_synced_at), 'YYYY-MM-DD')
+              FROM movies WHERE providers_synced_at IS NOT NULL)      AS en_eski,
+           (SELECT count(*) FROM movies WHERE providers_synced_at IS NULL)::text AS hic
+  `);
+  const ps = providerStats.rows[0];
+  console.log(`\n  📺 Sağlayıcı verisi:`);
+  console.log(`     Sağlayıcısı olan başlık:  ${ps.baslik}`);
+  console.log(`     Bölge × sağlayıcı satırı: ${ps.satir}`);
+  console.log(`     Tanınan servis:           ${ps.servis}`);
+  console.log(`     En eski tazeleme:         ${ps.en_eski ?? '—'}`);
+  console.log(`     Hiç sorulmamış:           ${ps.hic}`);
+
   // Migrations
   console.log(`\n  📋 Migrations:`);
   try {
