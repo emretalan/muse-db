@@ -608,8 +608,21 @@ const regionProviderCache = new Map<string, { list: RegionProvider[]; at: number
 const REGION_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 /** Bir bölgede kaç kutu gösteriliyor. Onikiden sonrası ekranda altı satır
- *  eder ve kuyruktakiler birkaç yüz başlık taşıyor. */
+ *  eder. */
 const REGION_PROVIDER_LIMIT = 12;
+
+/**
+ * Bir servisin kutu olmayı hak etmesi için bölgenin kataloğunun ne kadarını
+ * taşıması gerektiği.
+ *
+ * Ölçerek kondu: Türkiye listesinin kuyruğunda 14.133 filmin 20'sini taşıyan
+ * servisler vardı (Cultpix, Bloodstream). Bir kutu, cevabı değiştirebiliyorsa
+ * kutudur; 20 başlık tür ya da dönemle kesiştiği anda sıfır oluyor ve
+ * kullanıcı neden hiçbir şey çıkmadığını anlamıyor.
+ */
+const REGION_PROVIDER_SHARE = 0.01;
+/** Küçük bölgelerde oran tek başına her şeyi eleyebilir; mutlak taban. */
+const REGION_PROVIDER_FLOOR = 40;
 
 export async function getRegionProviders(
   region: string,
@@ -626,13 +639,19 @@ export async function getRegionProviders(
   params.push(normalized);
 
   const result = await pool.query<{ id: number; name: string; logo_path: string | null }>(
-    `WITH base AS (SELECT DISTINCT m.id ${fromAndWhere})
+    `WITH base AS (SELECT DISTINCT m.id ${fromAndWhere}),
+          floor AS (
+            SELECT GREATEST(${REGION_PROVIDER_FLOOR},
+                            (count(*) * ${REGION_PROVIDER_SHARE})::int) AS n
+              FROM base
+          )
      SELECT p.id, p.name, p.logo_path
        FROM base b
        JOIN movie_providers mp ON mp.movie_id = b.id
        JOIN providers p ON p.id = mp.provider_id
       WHERE mp.region = $${params.length}
       GROUP BY p.id, p.name, p.logo_path
+     HAVING count(*) >= (SELECT n FROM floor)
       ORDER BY count(*) DESC
       LIMIT ${REGION_PROVIDER_LIMIT}`,
     params
