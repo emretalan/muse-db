@@ -273,42 +273,45 @@ function buildSweeps(perDecade: number): Sweep[] {
     });
   }
 
-  // Kademe 3 dil taramaları — filmdeki eşinin gerekçesi seed-movies.ts'te.
-  // Bölge taramaları ülkeye bakıyor, bunlar dile; ikisi birbirinin yerine
-  // değil, yanına.
+  // Dil taramaları.
+  //
+  // Bölge taramaları ("Uzak Doğu", "Avrupa") ülkeye bakıyor ve hedefleri
+  // bütün bölgeye ait; tek tek diller o hedefin içinde boğuluyor. Ölçüldüğünde
+  // Japonca 787/1.082, Korece 511/793'te takılıydı — ikisi de aynı "Uzak Doğu"
+  // taramasını paylaşıyordu.
+  //
+  // Hedefler TMDB havuzunun üstünde bırakılıyor: tarama zaten sayfalar bitince
+  // duruyor, yani asıl sınır havuzun kendisi olmalı, hedef değil.
+  //
+  // Eşikler kademelerin sorgu tabanlarıyla birebir aynı; altına inen bir satır
+  // tabloya girip hiç gösterilmiyor.
   const tierThreeLanguages = [
     'tr', 'de', 'ru', 'pt', 'ko', 'zh', 'cn', 'hi', 'pl', 'sv', 'da', 'no',
     'nl', 'fi', 'cs', 'hu', 'el', 'ar', 'fa', 'th', 'ta', 'te', 'he', 'ro',
     'uk', 'id',
   ];
 
-  for (const language of tierThreeLanguages) {
-    sweeps.push({
-      label: `dil ${language}`,
-      params: {
-        sort_by: 'vote_count.desc',
-        'vote_count.gte': String(TIER_THREE_MIN_VOTES),
-        with_original_language: language,
-      },
-      target: 200,
-      minVotes: TIER_THREE_MIN_VOTES,
-    });
-  }
+  const languageSweeps: [readonly string[], number, number][] = [
+    // Kademe 1. Dönem taramaları da İngilizceyi tarıyor, ama listeleri 1960'ta
+    // başlıyor; bu taramada tarih kısıtı olmadığı için 1960 öncesi de geliyor.
+    [['en'], config.selection.minVoteCountTv, 1800],
+    [TIER_TWO_LANGUAGES, config.selection.minVoteCountTvNonEnglish, 1200],
+    [tierThreeLanguages, TIER_THREE_MIN_VOTES, 800],
+  ];
 
-  // Kademe 2 dilleri — filmdeki eşiyle aynı gerekçe: bunlar bölge
-  // taramalarının içinde kalıyor ve o taramaların hedefi bütün bölgeye ait.
-  // Eşikleri de farklı: sorgu bu dillerden 50 oy istiyor, kademe 3'ten 20.
-  for (const language of TIER_TWO_LANGUAGES) {
-    sweeps.push({
-      label: `dil ${language}`,
-      params: {
-        sort_by: 'vote_count.desc',
-        'vote_count.gte': String(config.selection.minVoteCountTvNonEnglish),
-        with_original_language: language,
-      },
-      target: 500,
-      minVotes: config.selection.minVoteCountTvNonEnglish,
-    });
+  for (const [languages, minVotes, target] of languageSweeps) {
+    for (const language of languages) {
+      sweeps.push({
+        label: `dil ${language}`,
+        params: {
+          sort_by: 'vote_count.desc',
+          'vote_count.gte': String(minVotes),
+          with_original_language: language,
+        },
+        target,
+        minVotes,
+      });
+    }
   }
 
   return sweeps;

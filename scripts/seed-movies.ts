@@ -453,59 +453,47 @@ function buildSweeps(perDecade: number): DiscoverSweep[] {
     });
   }
 
-  // Kademe 3 dil taramaları.
+  // Dil taramaları.
   //
-  // Bölge taramaları `with_origin_country` kullanıyor ve bu doğru bir tercih —
-  // Türk-Alman ortak yapımı bir film dile göre kaçıyor, ülkeye göre kaçmıyor.
-  // Ama tersi de doğru: ülkeye göre taranmayan bir dil hiç görünmüyor. İkisi
-  // birbirinin yerine değil, yanına.
+  // Bölge taramaları ("Avrupa", "Uzak Doğu") `with_origin_country` kullanıyor
+  // ve bu doğru bir tercih — Türk-Alman ortak yapımı bir film dile göre
+  // kaçıyor, ülkeye göre kaçmıyor. Ama tersi de doğru: o taramaların hedefi
+  // bütün bölgeye ait ve tek tek diller içinde boğuluyor. İkisi birbirinin
+  // yerine değil, yanına.
   //
-  // Buradaki diller `TIER_TWO_LANGUAGES` dışında kalanlar, yani sorgu anında
-  // 50 oy tabanıyla değerlendirilenler. fr/it/ja/es burada yok: onlar zaten
-  // bölge taramalarından bol bol geliyor ve kendi kademelerinde 150 istiyorlar.
+  // Hedefler TMDB havuzunun üstünde bırakılıyor: tarama zaten sayfalar bitince
+  // duruyor, yani asıl sınır havuzun kendisi olmalı, hedef değil. Kademe 3'te
+  // 300'lük hedef Almanca'nın 641'lik havuzunu kesiyordu.
+  //
+  // Eşikler kademelerin sorgu tabanlarıyla birebir aynı; altına inen bir satır
+  // tabloya girip hiç gösterilmiyor.
   const tierThreeLanguages = [
     'tr', 'de', 'ru', 'pt', 'ko', 'zh', 'cn', 'hi', 'pl', 'sv', 'da', 'no',
     'nl', 'fi', 'cs', 'hu', 'el', 'ar', 'fa', 'th', 'ta', 'te', 'he', 'ro',
     'uk', 'id', 'ml',
   ];
 
-  for (const language of tierThreeLanguages) {
-    sweeps.push({
-      label: `dil ${language}`,
-      params: {
-        sort_by: 'vote_count.desc',
-        'vote_count.gte': String(TIER_THREE_MIN_VOTES),
-        with_original_language: language,
-      },
-      // TMDB'de kademe 3 dillerinin ≥50 oylu havuzları 22 (uk) ile 641 (de)
-      // arasında; tek bir hedef hepsine yetiyor ve havuz bitince tarama
-      // kendiliğinden duruyor.
-      target: 300,
-      minVotes: TIER_THREE_MIN_VOTES,
-    });
-  }
+  const languageSweeps: [readonly string[], number, number][] = [
+    // Kademe 1. Dönem taramaları da İngilizceyi tarıyor, ama listeleri 1920'de
+    // başlıyor ve dönem başına hedefle sınırlı.
+    [['en'], config.selection.minVoteCount, 6500],
+    [TIER_TWO_LANGUAGES, config.selection.minVoteCountNonEnglish, 1300],
+    [tierThreeLanguages, TIER_THREE_MIN_VOTES, 700],
+  ];
 
-  // Kademe 2 dilleri de kendi taramalarını istiyor.
-  //
-  // Bunlar bölge taramalarının ("Avrupa", "Uzak Doğu") içinde kalıyordu ve o
-  // taramaların hedefi bütün bölgeye ait: Fransızca kütüphanede 383'te
-  // kalmıştı, oysa TMDB'de kuralımızın izin verdiği 1.237 film var. Aynı
-  // durum İtalyanca (222/719), Japonca (292/571) ve İspanyolca (244/475)
-  // için de geçerli.
-  //
-  // Eşik kademe 3'ünkinden farklı: bu dillerin havuzu geniş olduğu için
-  // sorgu onlardan 150 oy istiyor.
-  for (const language of TIER_TWO_LANGUAGES) {
-    sweeps.push({
-      label: `dil ${language}`,
-      params: {
-        sort_by: 'vote_count.desc',
-        'vote_count.gte': String(config.selection.minVoteCountNonEnglish),
-        with_original_language: language,
-      },
-      target: 1300,
-      minVotes: config.selection.minVoteCountNonEnglish,
-    });
+  for (const [languages, minVotes, target] of languageSweeps) {
+    for (const language of languages) {
+      sweeps.push({
+        label: `dil ${language}`,
+        params: {
+          sort_by: 'vote_count.desc',
+          'vote_count.gte': String(minVotes),
+          with_original_language: language,
+        },
+        target,
+        minVotes,
+      });
+    }
   }
 
   return sweeps;
