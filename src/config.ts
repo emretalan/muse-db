@@ -49,6 +49,9 @@ export const config = {
 
   // TMDB image base URLs
   tmdbImageBaseUrl: 'https://image.tmdb.org/t/p/w500',
+  // Oyuncu portreleri detay ekranında ~64 pt genişliğinde yan yana duruyor;
+  // afiş boyutu (w500) burada sekiz kat fazla.
+  tmdbProfileBaseUrl: 'https://image.tmdb.org/t/p/w185',
   // Provider logos are small chips — w500 would be ~25x oversized
   tmdbLogoBaseUrl: 'https://image.tmdb.org/t/p/w92',
   // Backdrops are 16:9 and sit behind the whole detail screen, so they need

@@ -376,6 +376,147 @@ export async function countEraFacets(
   return counts;
 }
 
+/** Detay ekranının alt yarısı: kadro, seri ve benzerler. */
+export interface CastMember {
+  personId: number;
+  name: string;
+  character: string | null;
+  profilePath: string | null;
+}
+
+export interface CollectionSibling {
+  id: number;
+  title: string;
+  year: number;
+  posterPath: string | null;
+}
+
+export interface SimilarTitle {
+  id: number;
+  title: string;
+  year: number;
+  posterPath: string | null;
+  /** Kaç anahtar kelime ortak — sıralamanın sebebi, ekranda gösterilmiyor. */
+  shared: number;
+}
+
+/** Bir başlığın kadrosu, TMDB'nin sırasıyla. */
+export async function getMovieCast(movieId: number): Promise<CastMember[]> {
+  const result = await pool.query<{
+    person_id: number;
+    name: string;
+    character: string | null;
+    profile_path: string | null;
+  }>(
+    `SELECT person_id, name, character, profile_path
+       FROM movie_cast WHERE movie_id = $1 ORDER BY ord`,
+    [movieId]
+  );
+  return result.rows.map((r) => ({
+    personId: r.person_id,
+    name: r.name,
+    character: r.character,
+    profilePath: r.profile_path,
+  }));
+}
+
+/** Aynı seriden diğer filmler, yayın sırasıyla. Filmin kendisi listede yok. */
+export async function getCollectionSiblings(movieId: number): Promise<{
+  name: string;
+  posterPath: string | null;
+  films: CollectionSibling[];
+} | null> {
+  const own = await pool.query<{
+    collection_id: number | null;
+    collection_name: string | null;
+    collection_poster_path: string | null;
+  }>(
+    `SELECT collection_id, collection_name, collection_poster_path
+       FROM movies WHERE id = $1`,
+    [movieId]
+  );
+  const row = own.rows[0];
+  if (!row?.collection_id || !row.collection_name) return null;
+
+  const siblings = await pool.query<{
+    id: number;
+    title: string;
+    year: number;
+    poster_path: string | null;
+  }>(
+    `SELECT id, title, year, poster_path
+       FROM movies
+      WHERE collection_id = $1 AND id <> $2
+      ORDER BY year`,
+    [row.collection_id, movieId]
+  );
+
+  // Tek filmlik "seri" bir seri değil: TMDB kimi filme henüz ikinci filmi
+  // çekilmemiş bir koleksiyon atıyor.
+  if (siblings.rows.length === 0) return null;
+
+  return {
+    name: row.collection_name,
+    posterPath: row.collection_poster_path,
+    films: siblings.rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      year: r.year,
+      posterPath: r.poster_path,
+    })),
+  };
+}
+
+/**
+ * Anahtar kelime örtüşmesine göre benzer başlıklar.
+ *
+ * TMDB'nin `/recommendations` ucu yerine kendi verimiz: ek istek harcamıyor ve
+ * yalnızca **kütüphanede olan** başlıkları döndürüyor — kullanıcıya
+ * dokunamayacağı bir film önermenin anlamı yok.
+ *
+ * Aynı türde olma şartı yok ama aynı medya türünde olma şartı var: bir filme
+ * benzer dizi önermek töreni bozar (söz ilk bölüm üzerine veriliyor, film
+ * üzerine değil).
+ *
+ * `HAVING count(*) >= 3`: iki ortak etiket rastlantı, üç bir imza. "sequel" ve
+ * "based on novel" gibi geniş etiketler tek başına her şeyi her şeye benzetiyor.
+ */
+export async function getSimilarTitles(
+  movieId: number,
+  limit = 12
+): Promise<SimilarTitle[]> {
+  const result = await pool.query<{
+    id: number;
+    title: string;
+    year: number;
+    poster_path: string | null;
+    shared: string;
+  }>(
+    `WITH own AS (
+       SELECT keyword_id FROM movie_keywords WHERE movie_id = $1
+     )
+     SELECT m.id, m.title, m.year, m.poster_path, count(*) AS shared
+       FROM movie_keywords mk
+       JOIN own ON own.keyword_id = mk.keyword_id
+       JOIN movies m ON m.id = mk.movie_id
+      WHERE m.id <> $1
+        AND m.media_type = (SELECT media_type FROM movies WHERE id = $1)
+        AND m.poster_path IS NOT NULL
+      GROUP BY m.id, m.title, m.year, m.poster_path
+     HAVING count(*) >= 3
+      ORDER BY count(*) DESC, m.vote_count DESC
+      LIMIT $2`,
+    [movieId, limit]
+  );
+  return result.rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    year: r.year,
+    posterPath: r.poster_path,
+    shared: parseInt(r.shared, 10),
+  }));
+}
+
 /** Verilen filmlerin istenen dildeki başlıkları. Çevirisi olmayan film
  *  haritada hiç yer almıyor — `toMovie` yedeğe düşüyor. */
 export async function getMoviesTitles(
