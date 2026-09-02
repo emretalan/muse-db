@@ -383,6 +383,17 @@ export async function getMoviesKeywords(movieIds: number[]): Promise<Map<number,
 // Varsayılan olarak yalnızca filmlerde arıyor. Tek çağıran, ana ekrandaki
 // film alıntısına dokunulduğunda o filme gitmek — oraya bir dizinin düşmesi
 // yanlış olurdu.
+/** Tek bir satır, kimliğinden.
+ *
+ *  Ortak söz için gerekli: kazananı iki cihazdan biri seçip tüm film nesnesini
+ *  paylaşılan belgeye yazıyor, yani karşı taraf onu yazanın dilinde alıyor.
+ *  Kimlik ikisinde de aynı olduğuna göre herkes kendi dilindeki kopyayı
+ *  buradan tazeliyor. */
+export async function getMovieById(id: number): Promise<MovieRow | null> {
+  const result = await pool.query<MovieRow>('SELECT * FROM movies WHERE id = $1', [id]);
+  return result.rows[0] ?? null;
+}
+
 export async function searchMovieByTitle(
   title: string,
   mediaType: MediaType = 'movie'

@@ -9,6 +9,7 @@ import { trailerRoutes } from './routes/trailer.js';
 import { synopsisRoutes } from './routes/synopsis.js';
 import { providerRoutes } from './routes/providers.js';
 import { originRoutes } from './routes/origins.js';
+import { movieRoutes } from './routes/movie.js';
 
 export function buildServer() {
   const fastify = Fastify({
@@ -64,6 +65,9 @@ export function buildServer() {
   fastify.register(synopsisRoutes);
   fastify.register(providerRoutes);
   fastify.register(originRoutes);
+  // `/movies/search` bundan önce kayıtlı ve statik segment parametreliyi
+  // yendiği için `/movies/:id` onu gölgelemiyor.
+  fastify.register(movieRoutes);
 
   return fastify;
 }
