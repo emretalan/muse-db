@@ -6,6 +6,7 @@ import { TIER_ONE_LANGUAGE, TIER_TWO_SQL } from '../services/languages.js';
 import { MOOD_SLUGS } from '../services/moods.js';
 import { NETWORK_BUCKETS, expandNetworks } from '../services/networks.js';
 import { AGE_CEILINGS } from '../services/ratings.js';
+import { normalizeRegion } from '../services/providers.js';
 
 // Era to year range mapping
 function eraToYearRange(era: Era): { start: number; end: number | null } {
@@ -64,6 +65,7 @@ function buildCandidateQuery(
     skipAge?: boolean;
     skipPopularity?: boolean;
     skipNetworks?: boolean;
+    skipProviders?: boolean;
   } = {}
 ): { fromAndWhere: string; params: unknown[] } {
   const {
@@ -232,6 +234,26 @@ function buildCandidateQuery(
       params.push(networkNames);
       paramIndex++;
     }
+  }
+
+  // Sağlayıcı: seçilenlerden herhangi birinde varsa yeter. Bölge şart —
+  // izleme hakları ülkeye satılıyor ve *Parasite* ABD'de hiçbir abonelikte
+  // yokken Almanya'da on ayrı serviste.
+  const normalizedProviders =
+    typeof filters.providers === 'number'
+      ? [filters.providers]
+      : Array.isArray(filters.providers)
+        ? filters.providers.filter((p) => Number.isInteger(p))
+        : [];
+  if (normalizedProviders.length > 0 && !options.skipProviders) {
+    conditions.push(
+      `EXISTS (SELECT 1 FROM movie_providers mp
+                WHERE mp.movie_id = m.id
+                  AND mp.region = $${paramIndex}
+                  AND mp.provider_id = ANY($${paramIndex + 1}))`
+    );
+    params.push(normalizeRegion(filters.region), normalizedProviders);
+    paramIndex += 2;
   }
 
   // Exclude recently picked movies
@@ -515,6 +537,25 @@ export async function countRefinementFacets(
 
   // Yayıncı yalnız dizide anlamlı — film satırlarında `networks` her zaman
   // boş, ve sekiz kutu için sekiz sıfır saymanın maliyeti var.
+  // Sağlayıcı sayımı: taban sorgu kendi filtresi olmadan kuruluyor, sonra
+  // bölgenin izleme tablosuyla birleşiyor. CTE + JOIN kullanılıyor çünkü kaç
+  // sağlayıcı olacağı önceden bilinmiyor — ruh hâli ya da yaş gibi sabit bir
+  // liste değil, bölgeye göre değişen bir küme.
+  const providerQuery = () => {
+    const { fromAndWhere, params } = buildCandidateQuery(filters, excludeMovieIds, {
+      skipProviders: true,
+    });
+    params.push(normalizeRegion(filters.region));
+    return pool.query<{ key: string; count: string }>(
+      `WITH base AS (SELECT DISTINCT m.id ${fromAndWhere})
+       SELECT 'prov:' || mp.provider_id AS key, count(*)::text AS count
+         FROM base b JOIN movie_providers mp ON mp.movie_id = b.id
+        WHERE mp.region = $${params.length}
+        GROUP BY mp.provider_id`,
+      params
+    );
+  };
+
   const totalQuery = () => {
     const { fromAndWhere, params } = buildCandidateQuery(filters, excludeMovieIds);
     return pool.query<Record<string, string>>(
@@ -523,19 +564,87 @@ export async function countRefinementFacets(
     );
   };
 
-  const results = await Promise.all(
-    isTv
-      ? [moodQuery(), ageQuery(), popularityQuery(), networkQuery(), totalQuery()]
-      : [moodQuery(), ageQuery(), popularityQuery(), totalQuery()]
-  );
+  const [singleRowResults, providerResult] = await Promise.all([
+    Promise.all(
+      isTv
+        ? [moodQuery(), ageQuery(), popularityQuery(), networkQuery(), totalQuery()]
+        : [moodQuery(), ageQuery(), popularityQuery(), totalQuery()]
+    ),
+    providerQuery(),
+  ]);
 
   const counts: FacetCounts = {};
-  for (const result of results) {
+  for (const result of singleRowResults) {
     for (const [key, value] of Object.entries(result.rows[0] ?? {})) {
       counts[key] = parseInt(value, 10) || 0;
     }
   }
+  // Sağlayıcı sorgusu tek satır değil satır listesi döndürüyor.
+  for (const row of providerResult.rows) {
+    counts[row.key] = parseInt(row.count, 10) || 0;
+  }
   return counts;
+}
+
+/** İnce ayar ekranında bir bölge için gösterilecek sağlayıcı kutuları. */
+export interface RegionProvider {
+  id: number;
+  name: string;
+  logoPath: string | null;
+}
+
+/**
+ * Bir bölgenin sağlayıcı listesi — kataloğun kendisinden.
+ *
+ * Elle kova tanımı yok: TMDB'de ABD'de 292, Almanya'da 195 sağlayıcı var ve
+ * listeler her ay oynuyor. Hangi kutuların gösterileceğine **veri** karar
+ * veriyor; bir servis kataloğumuzda ne kadar başlık taşıyorsa o kadar üstte.
+ *
+ * Liste **filtrelerden bağımsız** ve önbellekli. Kullanıcı ruh hâlini
+ * değiştirdikçe kutuların yeniden sıralanması, hangi kutuya bastığını
+ * unutturur; sönükleşme zaten sayımdan geliyor.
+ */
+const regionProviderCache = new Map<string, { list: RegionProvider[]; at: number }>();
+const REGION_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
+/** Bir bölgede kaç kutu gösteriliyor. Onikiden sonrası ekranda altı satır
+ *  eder ve kuyruktakiler birkaç yüz başlık taşıyor. */
+const REGION_PROVIDER_LIMIT = 12;
+
+export async function getRegionProviders(
+  region: string,
+  mediaType: MediaType
+): Promise<RegionProvider[]> {
+  const normalized = normalizeRegion(region);
+  const key = `${normalized}:${mediaType}`;
+  const cached = regionProviderCache.get(key);
+  if (cached && Date.now() - cached.at < REGION_CACHE_TTL_MS) return cached.list;
+
+  // Taban sorgu yalnızca görünürlük koşullarıyla: hangi servisin bu bölgede
+  // ağırlığı olduğu, kullanıcının o anki türüne göre değişmemeli.
+  const { fromAndWhere, params } = buildCandidateQuery({ mediaType }, []);
+  params.push(normalized);
+
+  const result = await pool.query<{ id: number; name: string; logo_path: string | null }>(
+    `WITH base AS (SELECT DISTINCT m.id ${fromAndWhere})
+     SELECT p.id, p.name, p.logo_path
+       FROM base b
+       JOIN movie_providers mp ON mp.movie_id = b.id
+       JOIN providers p ON p.id = mp.provider_id
+      WHERE mp.region = $${params.length}
+      GROUP BY p.id, p.name, p.logo_path
+      ORDER BY count(*) DESC
+      LIMIT ${REGION_PROVIDER_LIMIT}`,
+    params
+  );
+
+  const list = result.rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    logoPath: r.logo_path,
+  }));
+  regionProviderCache.set(key, { list, at: Date.now() });
+  return list;
 }
 
 /** Detay ekranının alt yarısı: kadro, seri ve benzerler. */

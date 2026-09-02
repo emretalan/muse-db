@@ -120,8 +120,23 @@ export interface PickFilters {
    *  bakmadıklarını getiriyor; verilmezse ikisi de. */
   popularity?: Popularity;
   /** Yayıncı kovası slug'ları (`"netflix"` — bkz. `services/networks.ts`).
-   *  Yalnız dizide anlamlı; film satırlarında `networks` boş. */
+   *  Yalnız dizide anlamlı; film satırlarında `networks` boş.
+   *
+   *  Uygulama bunu artık göndermiyor: aynı soruyu `providers` daha doğru
+   *  soruyor (bkz. `services/providers.ts`). Alan duruyor çünkü `networks`
+   *  sütunu hâlâ dolu ve "kim yayınladı" ile "nerede açabilirim" gerçekten
+   *  iki ayrı soru. */
   networks?: string[] | string;
+
+  /** TMDB sağlayıcı kimlikleri. Birden fazlası VEYA ile birleşiyor —
+   *  "Netflix'im ya da Disney+'ım var" demek. */
+  providers?: number[] | number;
+  /** İzleme haklarının sorulacağı ülke (ISO 3166-1 alpha-2). Yalnızca
+   *  `providers` ile birlikte anlamlı; verilmezse ABD.
+   *
+   *  Ayrı bir alan olması şart: hak bölgeye satılıyor ve bölgesiz bir
+   *  sağlayıcı filtresi kullanıcıların çoğuna yalan söylerdi. */
+  region?: string;
 }
 
 /** Bilinirlik kadranının durakları. Ortada durak yok: filtrenin kapalı hâli
