@@ -9,14 +9,21 @@ import { config } from '../config.js';
  * eklendiğinde üçünü birden güncellemek gerekiyordu — nitekim `originalTitle`
  * yıllardır tabloda duruyor ve hiçbir kopyada yer almıyordu.
  */
-export function toMovie(row: MovieRow, genres: string[], keywords: string[] = []): Movie {
+export function toMovie(
+  row: MovieRow,
+  genres: string[],
+  keywords: string[] = [],
+  /** İstemcinin dili ve o dildeki başlık. Yoksa İngilizce gösterilir. */
+  localized?: { language: string | null; title?: string }
+): Movie {
+  const title = displayTitle(row, localized);
   return {
     id: row.id,
     tmdbId: row.tmdb_id,
-    title: row.title,
-    // Yerelleştirilmiş başlıkla aynıysa göndermenin anlamı yok — istemci
+    title,
+    // Gösterilen başlıkla aynıysa göndermenin anlamı yok — istemci
     // "Yaban Çilekleri / Yaban Çilekleri" göstermek zorunda kalmasın.
-    originalTitle: row.original_title && row.original_title !== row.title
+    originalTitle: row.original_title && row.original_title !== title
       ? row.original_title
       : null,
     year: row.year,
@@ -51,4 +58,32 @@ function yearOf(value: Date | string | null): number | null {
   const date = value instanceof Date ? value : new Date(value);
   const year = date.getUTCFullYear();
   return Number.isFinite(year) ? year : null;
+}
+
+/**
+ * Ekranda görünecek başlık.
+ *
+ * Sıra: istenen dildeki çeviri → filmin kendi dili kullanıcının diliyse
+ * orijinal başlık → İngilizce.
+ *
+ * Ortadaki basamak TMDB'nin kendi davranışının dar bir kopyası. TMDB
+ * `language=` çağrısında çeviri yoksa **her zaman** orijinal başlığa düşüyor;
+ * bu, Japon kullanıcıya 「イジらないで、長瀞さん」 verdiği için doğru ama Türk
+ * kullanıcıya da aynısını verdiği için yanlış. Koşulu kullanıcının diline
+ * bağlamak ikisini de doğru yapıyor: orijinal başlık ancak okunabileceği
+ * kişiye gösteriliyor, diğer herkes İngilizceyi görüyor.
+ */
+function displayTitle(
+  row: MovieRow,
+  localized?: { language: string | null; title?: string }
+): string {
+  if (localized?.title) return localized.title;
+  if (
+    localized?.language &&
+    row.original_language === localized.language &&
+    row.original_title
+  ) {
+    return row.original_title;
+  }
+  return row.title;
 }

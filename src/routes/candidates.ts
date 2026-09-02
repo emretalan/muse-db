@@ -4,8 +4,10 @@ import {
   getCandidateMovies,
   getMoviesGenres,
   getMoviesKeywords,
+  getMoviesTitles,
   getRecentPickMovieIds,
 } from '../db/queries.js';
+import { normalizeLanguage } from '../services/languages.js';
 import type { PickFilters, Movie, MovieRow } from '../types/index.js';
 import { toMovie } from '../services/serialize.js';
 
@@ -14,6 +16,8 @@ interface CandidatesRequest {
   limit?: number;
   sessionId?: string;
   excludeMovieIds?: number[];
+  /** Uygulamanın dili — başlıklar bu dilde döner. Gönderilmezse İngilizce. */
+  lang?: string;
 }
 
 interface CandidatesResponse {
@@ -25,7 +29,8 @@ export async function candidatesRoutes(fastify: FastifyInstance): Promise<void> 
   fastify.post<{ Body: CandidatesRequest; Reply: CandidatesResponse | { error: string } }>(
     '/candidates',
     async (request, reply) => {
-      const { filters, limit = 30, sessionId, excludeMovieIds } = request.body;
+      const { filters, limit = 30, sessionId, excludeMovieIds, lang } = request.body;
+      const language = normalizeLanguage(lang);
 
       try {
         // Exclude recently picked movies if a session ID is provided
@@ -45,13 +50,17 @@ export async function candidatesRoutes(fastify: FastifyInstance): Promise<void> 
         const selected = shuffled.slice(0, Math.min(limit, shuffled.length));
 
         const movieIds = selected.map((m) => m.id);
-        const [genresMap, keywordsMap] = await Promise.all([
+        const [genresMap, keywordsMap, titlesMap] = await Promise.all([
           getMoviesGenres(movieIds),
           getMoviesKeywords(movieIds),
+          getMoviesTitles(movieIds, language),
         ]);
 
         const movies = selected.map((movie) =>
-          toMovie(movie, genresMap.get(movie.id) || [], keywordsMap.get(movie.id) || [])
+          toMovie(movie, genresMap.get(movie.id) || [], keywordsMap.get(movie.id) || [], {
+            language,
+            title: titlesMap.get(movie.id),
+          })
         );
 
         // `candidates.length` değil: aday listesi CANDIDATE_FETCH_LIMIT ile

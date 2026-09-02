@@ -113,6 +113,8 @@ export interface PickRequest {
   /** Movie ids the caller never wants back — e.g. titles already watched.
    *  Merged with the session's own recent picks. Mirrors `/candidates`. */
   excludeMovieIds?: number[];
+  /** Uygulamanın dili — başlık bu dilde döner. Gönderilmezse İngilizce. */
+  lang?: string;
 }
 
 export interface PickResponse {

@@ -281,6 +281,24 @@ export async function countOriginFacets(
   return counts;
 }
 
+/** Verilen filmlerin istenen dildeki başlıkları. Çevirisi olmayan film
+ *  haritada hiç yer almıyor — `toMovie` yedeğe düşüyor. */
+export async function getMoviesTitles(
+  movieIds: number[],
+  language: string | null
+): Promise<Map<number, string>> {
+  if (movieIds.length === 0 || !language) return new Map();
+
+  const result = await pool.query<{ movie_id: number; title: string }>(
+    `SELECT movie_id, title
+       FROM movie_translations
+      WHERE movie_id = ANY($1) AND language_code = $2`,
+    [movieIds, language]
+  );
+
+  return new Map(result.rows.map((row) => [row.movie_id, row.title]));
+}
+
 // Get genres for a specific movie
 export async function getMovieGenres(movieId: number): Promise<string[]> {
   const result = await pool.query<{ name: string }>(

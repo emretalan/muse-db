@@ -1,5 +1,11 @@
 import type { FastifyInstance } from 'fastify';
-import { getLocalTexts, getMovieSynopsis, getTmdbRef } from '../db/queries.js';
+import {
+  getLocalTexts,
+  getMovieSynopsis,
+  getMoviesTitles,
+  getTmdbRef,
+} from '../db/queries.js';
+import { normalizeLanguage } from '../services/languages.js';
 import { config } from '../config.js';
 
 interface SynopsisParams {
@@ -27,6 +33,13 @@ interface SynopsisResponse {
    *  Türkçe bir ekranda İngilizce kalmasının sebebi yok. */
   episodeName: string | null;
   episodeOverview: string | null;
+  /** Başlık, aynı dilde.
+   *
+   *  `/candidates` ve `/pick` başlığı zaten çevrili döndürüyor, yani tek
+   *  başına oynayan biri için bu alan gereksiz. Ortak söz için gerekli:
+   *  kazananı iki cihazdan biri seçip tüm film nesnesini paylaşılan belgeye
+   *  yazıyor, yani karşı taraf başlığı yazanın dilinde görüyordu. */
+  title: string | null;
 }
 
 // Map short language codes to TMDB locale codes
@@ -48,6 +61,7 @@ interface CachedTexts {
   tagline: string | null;
   episodeName: string | null;
   episodeOverview: string | null;
+  title: string | null;
 }
 
 const synopsisCache = new Map<string, CachedTexts & { cachedAt: number }>();
@@ -71,7 +85,7 @@ export async function synopsisRoutes(fastify: FastifyInstance): Promise<void> {
       // Return the database synopsis immediately for English, or when the DB already provides a usable value.
       if (normalizedLang === 'en') {
         const local = await getLocalTexts(movieId);
-        return { synopsis: dbSynopsis, ...local };
+        return { synopsis: dbSynopsis, ...local, title: null };
       }
 
       const tmdbLocale =
@@ -101,7 +115,13 @@ export async function synopsisRoutes(fastify: FastifyInstance): Promise<void> {
 
         if (!config.tmdbApiKey) {
           request.log.warn('TMDB_API_KEY not configured — cannot fetch localized synopsis');
-          return { synopsis: null, tagline: null, episodeName: null, episodeOverview: null };
+          return {
+            synopsis: null,
+            tagline: null,
+            episodeName: null,
+            episodeOverview: null,
+            title: null,
+          };
         }
 
         // Call TMDB movie detail endpoint with the requested language
@@ -114,7 +134,13 @@ export async function synopsisRoutes(fastify: FastifyInstance): Promise<void> {
 
         if (!response.ok) {
           request.log.error(`TMDB API error: ${response.status}`);
-          return { synopsis: null, tagline: null, episodeName: null, episodeOverview: null };
+          return {
+            synopsis: null,
+            tagline: null,
+            episodeName: null,
+            episodeOverview: null,
+            title: null,
+          };
         }
 
         const data = (await response.json()) as {
@@ -135,7 +161,14 @@ export async function synopsisRoutes(fastify: FastifyInstance): Promise<void> {
         const episodeName = clean(firstEpisode?.name);
         const episodeOverview = clean(firstEpisode?.overview);
 
-        const payload = { synopsis, tagline, episodeName, episodeOverview };
+        // Başlık TMDB'nin bu yanıtından değil kendi çeviri tablomuzdan:
+        // TMDB çevirisi yoksa orijinal başlığa düşüyor ve o başlık okuyanın
+        // alfabesinde olmayabiliyor. `getMoviesTitles` yalnızca gerçek
+        // çeviriyi döndürüyor; yoksa istemci elindekini kullanmaya devam eder.
+        const titles = await getMoviesTitles([movieId], normalizeLanguage(requestedLang));
+        const title = titles.get(movieId) ?? null;
+
+        const payload = { synopsis, tagline, episodeName, episodeOverview, title };
         synopsisCache.set(cacheKey, { ...payload, cachedAt: Date.now() });
 
         return payload;

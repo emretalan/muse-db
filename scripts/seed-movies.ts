@@ -25,6 +25,7 @@
  */
 
 import { pool } from '../src/db/client.js';
+import { TRANSLATION_REGIONS } from '../src/services/languages.js';
 import { config } from '../src/config.js';
 
 // ============================================================================
@@ -58,6 +59,13 @@ interface TMDBMovie {
   keywords?: { keywords?: { id: number; name: string }[] };
   release_dates?: {
     results?: { iso_3166_1: string; release_dates: { certification: string }[] }[];
+  };
+  translations?: {
+    translations?: {
+      iso_639_1: string;
+      iso_3166_1: string;
+      data?: { title?: string; name?: string };
+    }[];
   };
 }
 
@@ -274,7 +282,7 @@ async function fetchMovieDetails(movieId: number): Promise<TMDBMovie> {
   // Yönetmen, anahtar kelimeler ve yaş sınırı bu üç alt kaynakta duruyor ve
   // append_to_response sayesinde hiç ek istek harcamadan aynı yanıtla geliyor.
   return fetchFromTMDB<TMDBMovie>(
-    `/movie/${movieId}?append_to_response=credits,keywords,release_dates`
+    `/movie/${movieId}?append_to_response=credits,keywords,release_dates,translations`
   );
 }
 
@@ -423,15 +431,22 @@ async function clearMovies(): Promise<void> {
 
 /** Tablodaki her filmin TMDB kimliği, id sırasıyla. `--refresh` bunun
  *  üzerinden yürüyor. */
+/** Tazelenecek TMDB kimlikleri — yalnızca filmler.
+ *
+ *  `media_type` süzgeci şart: tablo dizileri de taşıyor ve bir dizinin TMDB
+ *  kimliği `/movie/` altında bambaşka bir filme denk geliyor. Süzgeçsiz bir
+ *  tazeleme o filmleri tabloya yeni satır olarak eklerdi. */
 async function getAllTmdbIds(): Promise<number[]> {
   const result = await pool.query<{ tmdb_id: number }>(
-    'SELECT tmdb_id FROM movies ORDER BY id'
+    "SELECT tmdb_id FROM movies WHERE media_type = 'movie' ORDER BY id"
   );
   return result.rows.map((r) => r.tmdb_id);
 }
 
 async function getExistingMovieCount(): Promise<number> {
-  const result = await pool.query<{ count: string }>('SELECT COUNT(*) as count FROM movies');
+  const result = await pool.query<{ count: string }>(
+    "SELECT COUNT(*) as count FROM movies WHERE media_type = 'movie'"
+  );
   return parseInt(result.rows[0].count, 10);
 }
 
@@ -564,6 +579,49 @@ async function linkMovieKeywords(
   );
 }
 
+/** TMDB kimi çeviriyi görünmez yön işaretleriyle sarmalıyor — "The Office"in
+ *  Türkçesi "\u200eOfis\u200e" olarak geliyor. Ekranda görünmüyorlar ama
+ *  karşılaştırmayı bozuyorlar, o yüzden `trim` yetmiyor. */
+function cleanTitle(value: string | undefined): string {
+  if (!value) return '';
+  return value.replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '').trim();
+}
+
+/** TMDB'nin çeviri listesinden uygulamanın konuştuğu dilleri süzer.
+ *
+ *  TMDB aynı dil için birden fazla bölge tutabiliyor — `de-DE` ile `de-AT`
+ *  ayrı iki kayıt — o yüzden bölge kodu da eşleşmek zorunda. Çevirisi
+ *  olmayan dilde boş string dönüyor; o kayıt hiç yazılmıyor ve okuma tarafı
+ *  İngilizceye düşüyor.
+ */
+function extractTranslations(
+  entries:
+    | { iso_639_1: string; iso_3166_1: string; data?: { title?: string; name?: string } }[]
+    | undefined
+): { language: string; title: string }[] {
+  if (!entries) return [];
+  const out: { language: string; title: string }[] = [];
+  for (const [language, region] of Object.entries(TRANSLATION_REGIONS)) {
+    const entry = entries.find((e) => e.iso_639_1 === language && e.iso_3166_1 === region);
+    const title = cleanTitle(entry?.data?.title ?? entry?.data?.name);
+    if (title) out.push({ language, title });
+  }
+  return out;
+}
+
+async function linkMovieTranslations(
+  movieId: number,
+  translations: { language: string; title: string }[]
+): Promise<void> {
+  if (translations.length === 0) return;
+  await pool.query(
+    `INSERT INTO movie_translations (movie_id, language_code, title)
+     SELECT $1, * FROM unnest($2::text[], $3::text[])
+     ON CONFLICT (movie_id, language_code) DO UPDATE SET title = EXCLUDED.title`,
+    [movieId, translations.map((t) => t.language), translations.map((t) => t.title)]
+  );
+}
+
 async function linkMovieCountries(
   movieId: number,
   countries: { iso_3166_1: string }[]
@@ -632,6 +690,10 @@ async function refresh(): Promise<void> {
         if (details.keywords?.keywords?.length) {
           await linkMovieKeywords(movieId, details.keywords.keywords);
         }
+        await linkMovieTranslations(
+          movieId,
+          extractTranslations(details.translations?.translations)
+        );
       } else {
         progress.skipped++;
       }
@@ -731,6 +793,10 @@ async function discoverSeed(options: SeedOptions): Promise<void> {
             if (details.keywords?.keywords?.length) {
               await linkMovieKeywords(movieId, details.keywords.keywords);
             }
+            await linkMovieTranslations(
+              movieId,
+              extractTranslations(details.translations?.translations)
+            );
           } else {
             totals.skippedQuality++;
           }
@@ -859,6 +925,10 @@ async function seed(options: SeedOptions): Promise<void> {
               if (details.keywords?.keywords?.length) {
                 await linkMovieKeywords(movieId, details.keywords.keywords);
               }
+              await linkMovieTranslations(
+                movieId,
+                extractTranslations(details.translations?.translations)
+              );
             } else {
               progress.skipped++;
             }

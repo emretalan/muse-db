@@ -17,6 +17,7 @@
  */
 
 import { pool } from '../src/db/client.js';
+import { TRANSLATION_REGIONS } from '../src/services/languages.js';
 import { config } from '../src/config.js';
 
 // ============================================================================
@@ -55,6 +56,14 @@ interface TMDBSeries {
    *  ülke başına tarih listesi değil, tek bir `rating` dizesi. */
   content_ratings?: { results?: { iso_3166_1: string; rating: string }[] };
   external_ids?: { imdb_id?: string | null };
+  translations?: {
+    translations?: {
+      iso_639_1: string;
+      iso_3166_1: string;
+      /** Dizide başlık `name`, filmde `title`. */
+      data?: { name?: string; title?: string };
+    }[];
+  };
 }
 
 interface TMDBEpisode {
@@ -116,7 +125,7 @@ async function fetchFromTMDB<T>(endpoint: string): Promise<T> {
 
 async function fetchSeries(seriesId: number): Promise<TMDBSeries> {
   return fetchFromTMDB<TMDBSeries>(
-    `/tv/${seriesId}?append_to_response=credits,keywords,content_ratings,external_ids`
+    `/tv/${seriesId}?append_to_response=credits,keywords,content_ratings,external_ids,translations`
   );
 }
 
@@ -357,6 +366,43 @@ async function linkCountries(movieId: number, codes: string[]): Promise<void> {
   );
 }
 
+/** TMDB kimi çeviriyi görünmez yön işaretleriyle sarmalıyor — "The Office"in
+ *  Türkçesi "\u200eOfis\u200e" olarak geliyor. Ekranda görünmüyorlar ama
+ *  karşılaştırmayı bozuyorlar, o yüzden `trim` yetmiyor. */
+function cleanTitle(value: string | undefined): string {
+  if (!value) return '';
+  return value.replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '').trim();
+}
+
+/** Bkz. `seed-movies.ts`'teki eşi. Dizide başlık `data.name` altında. */
+function extractTranslations(
+  entries:
+    | { iso_639_1: string; iso_3166_1: string; data?: { name?: string; title?: string } }[]
+    | undefined
+): { language: string; title: string }[] {
+  if (!entries) return [];
+  const out: { language: string; title: string }[] = [];
+  for (const [language, region] of Object.entries(TRANSLATION_REGIONS)) {
+    const entry = entries.find((e) => e.iso_639_1 === language && e.iso_3166_1 === region);
+    const title = cleanTitle(entry?.data?.name ?? entry?.data?.title);
+    if (title) out.push({ language, title });
+  }
+  return out;
+}
+
+async function linkTranslations(
+  movieId: number,
+  translations: { language: string; title: string }[]
+): Promise<void> {
+  if (translations.length === 0) return;
+  await pool.query(
+    `INSERT INTO movie_translations (movie_id, language_code, title)
+     SELECT $1, * FROM unnest($2::text[], $3::text[])
+     ON CONFLICT (movie_id, language_code) DO UPDATE SET title = EXCLUDED.title`,
+    [movieId, translations.map((t) => t.language), translations.map((t) => t.title)]
+  );
+}
+
 async function linkKeywords(movieId: number, keywords: { id: number; name: string }[]): Promise<void> {
   if (keywords.length === 0) return;
   const ids = keywords.map((k) => k.id);
@@ -377,6 +423,77 @@ async function linkKeywords(movieId: number, keywords: { id: number; name: strin
 // ============================================================================
 // Main
 // ============================================================================
+/**
+ * Tablodaki dizileri TMDB'den yeniden çekip alanlarını tazeler.
+ *
+ * Yeni dizi eklemez ve hiçbir `movies.id` değişmez: sorgu tablodan gelen
+ * `tmdb_id` üzerinden gidiyor ve upsert `ON CONFLICT (tmdb_id, media_type)`
+ * olduğu için satır yerinde güncelleniyor. Çeviri gibi sonradan eklenen
+ * sütunları doldurmanın tek yolu bu.
+ */
+async function refresh(): Promise<void> {
+  const result = await pool.query<{ tmdb_id: number }>(
+    "SELECT tmdb_id FROM movies WHERE media_type = 'tv' ORDER BY id"
+  );
+  const ids = result.rows.map((r) => r.tmdb_id);
+
+  console.log(`
+╔══════════════════════════════════════════════════════════════════════╗
+║                   📺 Muse TV Seeder — refresh                        ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+  Tablodaki dizi sayısı: ${ids.length}
+`);
+
+  const totals = { updated: 0, skipped: 0, errors: 0 };
+  const startedAt = Date.now();
+
+  for (const [index, tmdbId] of ids.entries()) {
+    try {
+      await sleep(RATE_LIMIT_DELAY);
+      const series = await fetchSeries(tmdbId);
+
+      await sleep(RATE_LIMIT_DELAY);
+      const episode = await fetchFirstEpisode(tmdbId);
+      if (!episode) {
+        totals.skipped++;
+        continue;
+      }
+
+      // Eşik 0: satır zaten tabloda. Bugünkü eşiklerin altına düşmüş olsa
+      // bile verisini tazelemek istiyoruz; kimin gösterileceğine sorgu
+      // anındaki eşikler karar veriyor, seed değil.
+      const movieId = await upsertSeries(series, episode, 0);
+      if (!movieId) {
+        totals.skipped++;
+        continue;
+      }
+
+      totals.updated++;
+
+      if (series.genres) await linkGenres(movieId, series.genres.map((g) => g.id));
+      if (series.production_countries) {
+        await linkCountries(movieId, series.production_countries.map((c) => c.iso_3166_1));
+      }
+      if (series.keywords?.results?.length) {
+        await linkKeywords(movieId, series.keywords.results);
+      }
+      await linkTranslations(movieId, extractTranslations(series.translations?.translations));
+    } catch {
+      totals.errors++;
+    }
+
+    if ((index + 1) % 25 === 0 || index === ids.length - 1) {
+      process.stdout.write(
+        `\r  ${index + 1}/${ids.length}  güncellenen ${totals.updated}  atlanan ${totals.skipped}  hata ${totals.errors}   `
+      );
+    }
+  }
+
+  const elapsed = Math.round((Date.now() - startedAt) / 1000);
+  console.log(`\n\n  ✓ ${totals.updated} dizi tazelendi (${elapsed} sn)\n`);
+}
+
 
 async function main(): Promise<void> {
   if (!config.tmdbApiKey) {
@@ -385,6 +502,13 @@ async function main(): Promise<void> {
   }
 
   const args = process.argv.slice(2);
+
+  if (args.includes('--refresh')) {
+    await refresh();
+    await pool.end();
+    return;
+  }
+
   const countIndex = args.indexOf('--count');
   const perDecade = countIndex >= 0 ? parseInt(args[countIndex + 1], 10) || 200 : 200;
 
@@ -466,6 +590,10 @@ async function main(): Promise<void> {
           if (series.keywords?.results?.length) {
             await linkKeywords(movieId, series.keywords.results);
           }
+          await linkTranslations(
+            movieId,
+            extractTranslations(series.translations?.translations)
+          );
         } catch {
           totals.errors++;
         }

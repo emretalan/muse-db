@@ -8,6 +8,7 @@ import {
   getRecentPickMovieIds,
   isFirstPickForSession,
   recordPick,
+  getMoviesTitles,
 } from '../db/queries.js';
 
 // Calculate weight for a movie based on rating and popularity
@@ -39,7 +40,9 @@ function weightedRandomSelect(candidates: WeightedCandidate[]): WeightedCandidat
 export async function pickMovie(
   sessionId: string,
   filters: PickFilters,
-  excludeMovieIds: number[] = []
+  excludeMovieIds: number[] = [],
+  /** İstemcinin dili; başlık bu dilde döndürülüyor. */
+  language: string | null = null
 ): Promise<Movie | null> {
   // Step 1: Get recently picked movie IDs to exclude
   const recentPickIds = await getRecentPickMovieIds(sessionId);
@@ -89,5 +92,9 @@ export async function pickMovie(
 
   // Step 8: Return the movie
   const keywords = await getMovieKeywords(selected.movie.id);
-  return toMovie(selected.movie, selected.genres, keywords);
+  const titles = await getMoviesTitles([selected.movie.id], language);
+  return toMovie(selected.movie, selected.genres, keywords, {
+    language,
+    title: titles.get(selected.movie.id),
+  });
 }
