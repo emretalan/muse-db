@@ -49,9 +49,11 @@ function normalizeList(value: string[] | string | undefined): string[] {
 function buildCandidateQuery(
   filters: PickFilters,
   excludeMovieIds: number[],
-  /** `skipOrigin`: menşe koşulunu hiç ekleme. Kova sayımı, menşe dışındaki
-   *  tüm filtreleri paylaşan bir taban sorguya ihtiyaç duyuyor. */
-  options: { skipOrigin?: boolean } = {}
+  /** Bir boyutu sorgudan tamamen çıkarır. Her facet sayımı, **kendi** boyutu
+   *  dışındaki tüm filtreleri paylaşan bir taban sorguya ihtiyaç duyuyor:
+   *  "tür seçilmemişken her türde ne var", "dönem seçilmemişken her dönemde
+   *  ne var". */
+  options: { skipOrigin?: boolean; skipEra?: boolean; skipGenres?: boolean } = {}
 ): { fromAndWhere: string; params: unknown[] } {
   const {
     minVoteCount,
@@ -115,7 +117,7 @@ function buildCandidateQuery(
   let paramIndex = 1;
 
   // Era filter
-  if (filters.era) {
+  if (filters.era && !options.skipEra) {
     const { start, end } = eraToYearRange(filters.era);
     if (end !== null) {
       conditions.push(`m.year >= $${paramIndex} AND m.year <= $${paramIndex + 1}`);
@@ -187,7 +189,7 @@ function buildCandidateQuery(
 
   // Genre filter (if specified)
   let genreJoin = '';
-  if (normalizedGenreIds.length > 0) {
+  if (normalizedGenreIds.length > 0 && !options.skipGenres) {
     genreJoin = '\n      INNER JOIN movie_genres mg ON m.id = mg.movie_id\n    ';
     conditions.push(`mg.genre_id = ANY($${paramIndex})`);
     params.push(normalizedGenreIds);
@@ -283,6 +285,92 @@ export async function countOriginFacets(
   const row = result.rows[0] ?? {};
   const counts: OriginCounts = {};
   for (const [key, value] of Object.entries(row)) {
+    counts[key] = parseInt(value, 10) || 0;
+  }
+  return counts;
+}
+
+/** Facet sayımlarının ortak biçimi: anahtar -> kalan başlık sayısı.
+ *  `any` anahtarı o boyutta hiç seçim yapılmamış hâlin toplamı. */
+export type FacetCounts = Record<string, number>;
+
+/**
+ * TMDB tür kimliği -> o türde kalan başlık sayısı.
+ *
+ * Tür kendi sayımından çıkarılıyor (`skipGenres`), çünkü sorulan şey "tür
+ * seçilmemişken her türde ne var". Ekran çoklu seçime izin veriyor ve türler
+ * VEYA ile birleşiyor, yani Dram'ı seçmek Belgesel'in ne getireceğini
+ * değiştirmiyor — sayım bir kez alınıp ekranda sabit kalabiliyor.
+ *
+ * FILTER yerine CTE + JOIN: 19 tür için 19 ayrı EXISTS alt sorgusu
+ * yazmak gerekirdi.
+ */
+export async function countGenreFacets(
+  filters: PickFilters,
+  excludeMovieIds: number[]
+): Promise<FacetCounts> {
+  const { fromAndWhere, params } = buildCandidateQuery(filters, excludeMovieIds, {
+    skipGenres: true,
+  });
+
+  const result = await pool.query<{ key: string; count: string }>(
+    `WITH base AS (SELECT DISTINCT m.id ${fromAndWhere})
+     SELECT mg.genre_id::text AS key, count(*)::text AS count
+       FROM base b JOIN movie_genres mg ON mg.movie_id = b.id
+      GROUP BY mg.genre_id
+     UNION ALL
+     SELECT 'any', count(*)::text FROM base`,
+    params
+  );
+
+  const counts: FacetCounts = {};
+  for (const row of result.rows) {
+    counts[row.key] = parseInt(row.count, 10) || 0;
+  }
+  return counts;
+}
+
+/** Bütün dönemler, yıl aralıklarıyla. `eraToYearRange` tek tek çağrılabilirdi
+ *  ama sayım hepsini birden istiyor. */
+const ERA_KEYS: Era[] = [
+  'pre-1980',
+  '1980-1989',
+  '1990-1999',
+  '2000-2009',
+  '2010-2019',
+  '2020-now',
+];
+
+/**
+ * Dönem -> o dönemde kalan başlık sayısı.
+ *
+ * Dönem kendi sayımından çıkarılıyor; tür ve menşe uygulanıyor. Tören sırası
+ * gereği menşe henüz seçilmemiş oluyor, ama filtre gelirse de doğru çalışır.
+ */
+export async function countEraFacets(
+  filters: PickFilters,
+  excludeMovieIds: number[]
+): Promise<FacetCounts> {
+  const { fromAndWhere, params } = buildCandidateQuery(filters, excludeMovieIds, {
+    skipEra: true,
+  });
+
+  const selects = ['COUNT(DISTINCT m.id) AS any'];
+  for (const era of ERA_KEYS) {
+    const { start, end } = eraToYearRange(era);
+    const range =
+      end === null ? `m.year >= ${start}` : `m.year BETWEEN ${start} AND ${end}`;
+    // Anahtar tire içeriyor, o yüzden sütun adı tırnaklanıyor.
+    selects.push(`COUNT(DISTINCT m.id) FILTER (WHERE ${range}) AS "${era}"`);
+  }
+
+  const result = await pool.query<Record<string, string>>(
+    `SELECT ${selects.join(', ')} ${fromAndWhere}`,
+    params
+  );
+
+  const counts: FacetCounts = {};
+  for (const [key, value] of Object.entries(result.rows[0] ?? {})) {
     counts[key] = parseInt(value, 10) || 0;
   }
   return counts;
