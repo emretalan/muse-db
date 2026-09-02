@@ -64,12 +64,20 @@ export function normalizeRegion(raw: string | null | undefined): string {
 const ALIASES: Record<number, number> = {
   119: 9,    // Amazon Prime Video (TR/FR/BR kaydı) -> Amazon Prime Video
   2100: 9,   // Amazon Prime Video with Ads
+  613: 9,    // Amazon Prime Video Free with Ads
   384: 1899, // HBO Max (eski ABD kaydı) -> HBO Max
   118: 1899, // HBO Go
   31: 1899,  // HBO Now
   2303: 531, // Paramount Plus Premium -> Paramount Plus
   2616: 531, // Paramount Plus Essential
+  2304: 531, // Paramount Plus Basic with Ads
   1968: 283, // Crunchyroll (ikinci kayıt)
+  // Aynı aboneliğin ucuz kademesi ayrı bir kayıt olarak geliyor ve
+  // birleştirilmezse her bölgede iki "Netflix" kutusu çıkıyordu — ikincisi
+  // birincinin neredeyse tamamını taşıyarak.
+  1796: 8,   // Netflix Standard with Ads
+  175: 8,    // Netflix Kids
+  421: 304,  // Joyn Plus -> Joyn
 };
 
 export function canonicalProviderId(id: number): number {
@@ -85,7 +93,10 @@ export function canonicalProviderId(id: number): number {
  * Channel" gibi kayıtlar başka bir servisin içinden satılan ek paketler.
  * Elenmezlerse ABD'de tek bir film için "HBO Max" beş ayrı kutuda görünüyor.
  */
-const EXCLUDED_IDS = new Set([2285]);
+const EXCLUDED_IDS = new Set([
+  2285, // JustWatch TV — toplayıcı, abonelik değil
+  2284, // HBO Max on U-Next — U-NEXT içinden satılan paket, ayrı bir servis değil
+]);
 const EXCLUDED_NAME = /(Amazon Channel|Apple TV Channel|Roku Premium Channel|Channel$)/i;
 
 export function isRealService(id: number, name: string): boolean {

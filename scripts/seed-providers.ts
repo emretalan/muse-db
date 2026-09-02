@@ -70,6 +70,9 @@ interface Link {
   movieId: number;
   region: string;
   providerId: number;
+  /** `f` aboneliğe dahil, `a` herkese açık. Kutuların sırasını belirliyor;
+   *  filtre ikisini de eşit sayıyor. */
+  kind: 'f' | 'a';
 }
 
 /** Sözlük: kimlik -> ad ve logo. Aynı sağlayıcı binlerce başlıkta geçiyor,
@@ -94,11 +97,12 @@ async function fetchProviders(target: Target): Promise<Record<string, TmdbRegion
 }
 
 /**
- * Bir başlığın bütün bölgelerdeki abonelik satırları.
+ * Bir başlığın bütün bölgelerdeki izleme satırları.
  *
  * `flatrate`, `free` ve `ads` birlikte alınıyor: üçü de "ek ödeme yapmadan
- * açabilirsin" demek. `rent`/`buy` alınmıyor — neredeyse her film kiralanabilir
- * ve bir filtre olarak hiçbir şey elemiyor.
+ * açabilirsin" demek ve filtre üçünü eşit sayıyor. Ayrıldıkları tek yer
+ * kutuların sırası — gerekçesi migration 015'te. `rent`/`buy` hiç alınmıyor:
+ * neredeyse her film kiralanabilir, yani bir filtre olarak hiçbir şey elemiyor.
  */
 function extractLinks(movieId: number, results: Record<string, TmdbRegion>): Link[] {
   const links: Link[] = [];
@@ -106,23 +110,32 @@ function extractLinks(movieId: number, results: Record<string, TmdbRegion>): Lin
     const entry = results[region];
     if (!entry) continue;
 
-    // Aynı servis hem `flatrate` hem `ads` altında görünebiliyor; kimlik
-    // sadeleştikten sonra tekilleştiriliyor.
-    const seen = new Set<number>();
-    for (const provider of [...(entry.flatrate ?? []), ...(entry.free ?? []), ...(entry.ads ?? [])]) {
-      if (!isRealService(provider.provider_id, provider.provider_name)) continue;
-      const id = canonicalProviderId(provider.provider_id);
-      if (seen.has(id)) continue;
-      seen.add(id);
+    // Aynı servis hem `flatrate` hem `ads` altında görünebiliyor. Kimlik
+    // sadeleştikten sonra tekilleştiriliyor ve abonelik kaydı kazanıyor —
+    // sırayı belirleyen o.
+    const seen = new Map<number, Link>();
+    const groups: [TmdbProvider[] | undefined, 'f' | 'a'][] = [
+      [entry.flatrate, 'f'],
+      [entry.free, 'a'],
+      [entry.ads, 'a'],
+    ];
 
-      if (!dictionary.has(id)) {
-        dictionary.set(id, {
-          name: provider.provider_name,
-          logoPath: provider.logo_path ?? null,
-        });
+    for (const [list, kind] of groups) {
+      for (const provider of list ?? []) {
+        if (!isRealService(provider.provider_id, provider.provider_name)) continue;
+        const id = canonicalProviderId(provider.provider_id);
+        if (seen.has(id)) continue;
+        seen.set(id, { movieId, region, providerId: id, kind });
+
+        if (!dictionary.has(id)) {
+          dictionary.set(id, {
+            name: provider.provider_name,
+            logoPath: provider.logo_path ?? null,
+          });
+        }
       }
-      links.push({ movieId, region, providerId: id });
     }
+    links.push(...seen.values());
   }
   return links;
 }
@@ -146,10 +159,15 @@ async function flush(movieIds: number[], links: Link[]): Promise<void> {
 
   if (links.length > 0) {
     await pool.query(
-      `INSERT INTO movie_providers (movie_id, region, provider_id)
-       SELECT * FROM unnest($1::int[], $2::char(2)[], $3::int[])
+      `INSERT INTO movie_providers (movie_id, region, provider_id, kind)
+       SELECT * FROM unnest($1::int[], $2::char(2)[], $3::int[], $4::char(1)[])
        ON CONFLICT DO NOTHING`,
-      [links.map((l) => l.movieId), links.map((l) => l.region), links.map((l) => l.providerId)]
+      [
+        links.map((l) => l.movieId),
+        links.map((l) => l.region),
+        links.map((l) => l.providerId),
+        links.map((l) => l.kind),
+      ]
     );
   }
 

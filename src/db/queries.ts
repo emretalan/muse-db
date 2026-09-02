@@ -652,7 +652,13 @@ export async function getRegionProviders(
       WHERE mp.region = $${params.length}
       GROUP BY p.id, p.name, p.logo_path
      HAVING count(*) >= (SELECT n FROM floor)
-      ORDER BY count(*) DESC
+      -- Aboneliğe dahil servisler önce. Reklamlı ve kütüphane servislerinin
+      -- arka kataloğu çok geniş ve saf sayı sıralaması Netflix'i ABD'de
+      -- altıncı sıraya düşürüyordu (gerekçe: migration 015).
+      -- COALESCE: kind sütunu 015 ile geldi ve tazeleme turu bitene kadar bir
+      -- kısım satırda NULL. Postgres NULL'ı DESC sıralamada başa koyuyor,
+      -- yani sarmalanmasa tazelenmemiş servisler tepede görünürdü.
+      ORDER BY COALESCE(bool_or(mp.kind = 'f'), false) DESC, count(*) DESC
       LIMIT ${REGION_PROVIDER_LIMIT}`,
     params
   );
