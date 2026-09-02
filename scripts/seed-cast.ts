@@ -25,6 +25,14 @@ const RATE_LIMIT_DELAY = 50;
  *  `CAST_LIMIT` satır düşüyor. */
 const FLUSH_SIZE = 500;
 
+/** Karakter adının ekranda duracağı en fazla uzunluk.
+ *
+ *  TMDB kimi kaydı toplu rol listesiyle dolduruyor ("Himself / Narrator /
+ *  Various Roles / …") ve böyle bir değer 72 pt genişliğindeki bir kartta
+ *  zaten okunmuyor. Şema tarafında da `text`e geçildi, yani bu kırpma bir
+ *  koruma değil bir görgü kuralı — koruma migration 012'de. */
+const CHARACTER_MAX = 120;
+
 /** Detay ekranında kaç isim duracak.
  *
  *  TMDB kadroyu yüzlerce kişiyle döndürüyor; sekizinci isimden sonrası bir
@@ -202,7 +210,7 @@ async function main(): Promise<void> {
             ord,
             personId: person.id,
             name: person.name,
-            character: person.character?.trim() || null,
+            character: person.character?.trim().slice(0, CHARACTER_MAX) || null,
             profilePath: person.profile_path ?? null,
           });
         });
