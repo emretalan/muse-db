@@ -25,8 +25,9 @@
  */
 
 import { pool } from '../src/db/client.js';
-import { TRANSLATION_REGIONS } from '../src/services/languages.js';
+import { TRANSLATION_REGIONS, minVotesForLanguage } from '../src/services/languages.js';
 import { config } from '../src/config.js';
+import { LinkBuffer } from './link-buffer.js';
 
 // ============================================================================
 // Types
@@ -82,6 +83,10 @@ interface SeedOptions {
   source: 'popular' | 'top_rated' | 'both' | 'discover';
   minVotes: number;
   clear: boolean;
+  /** `discover` kipinde: yalnızca etiketi bu önekle başlayan taramaları
+   *  çalıştır ("tür", "dil", "dönem", "bölge"). Tam tarama saatler sürüyor;
+   *  ince kutuları önce doldurabilmek için. */
+  only: string | null;
   /** Yeni film aramak yerine tablodaki mevcut filmleri TMDB'den yeniden çek.
    *  Yeni sütunları (yönetmen, anahtar kelime, backdrop, slogan, sertifika)
    *  geriye dönük doldurmanın tek yolu bu — `popular`/`top_rated` listeleri
@@ -117,6 +122,7 @@ function parseArgs(): SeedOptions {
     minVotes: 100,
     clear: false,
     refresh: false,
+    only: null,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -129,6 +135,11 @@ function parseArgs(): SeedOptions {
 
     if (arg === '--refresh') {
       options.refresh = true;
+      continue;
+    }
+
+    if (arg === '--only') {
+      options.only = args[++i] ?? null;
       continue;
     }
 
@@ -191,6 +202,8 @@ Usage:
 
 Options:
   --count, -c <number>    Number of movies to fetch (default: 500)
+  --only <önek>           Yalnızca 'discover' kipinde: etiketi bu önekle
+                          başlayan taramalar ("tür", "dil", "dönem", "bölge")
   --source, -s <type>     Source: 'popular', 'top_rated', 'both', 'discover'
                           (default: 'both'). 'discover' balances the library
                           with per-decade and per-region sweeps instead of
@@ -320,6 +333,16 @@ function extractCertification(movie: TMDBMovie): string | null {
   return null;
 }
 
+/** Her taramanın taşıdığı taban parametreler.
+ *
+ *  Sorgu anındaki eşiklerle aynı olmalılar; aksi hâlde TMDB'den çekilen
+ *  başlık tabloya girip hiç gösterilmiyor — hem boşa giden bir istek hem
+ *  ölü satır. `vote_count` burada yok çünkü o taramadan taramaya değişiyor. */
+const BASE_DISCOVER_PARAMS: Record<string, string> = {
+  'vote_average.gte': String(config.selection.minVoteAverage),
+  'with_runtime.gte': String(config.selection.minRuntime),
+};
+
 /** Tek bir /discover/movie taraması. */
 interface DiscoverSweep {
   label: string;
@@ -392,6 +415,72 @@ function buildSweeps(perDecade: number): DiscoverSweep[] {
     });
   }
 
+  // Tür taramaları.
+  //
+  // Dönem ve bölge taramalarının ikisi de `vote_count.desc` sıralı, ve bu
+  // türler genel oy sıralamasında hep en altta kalıyor — kütüphanede 15
+  // belgesel, 21 TV filmi, 72 western vardı. Uygulamanın tür ekranındaki bir
+  // kartın karşılığının neredeyse boş olması, o kartı hiç göstermemekten daha
+  // kötü. Dizi tarafında bu taramalar zaten vardı (seed-tv.ts); eksik olan
+  // filmdi.
+  //
+  // Hedefler TMDB'de kuralımızın izin verdiği tavanla hizalı (ölçüldü):
+  // belgesel 204, TV filmi 101, western 162, müzik 321, savaş 562, tarih 903.
+  const thinGenres: [string, number, number][] = [
+    ['Belgesel', 99, 220],
+    ['TV Filmi', 10770, 110],
+    ['Western', 37, 170],
+    ['Müzik', 10402, 330],
+    ['Savaş', 10752, 400],
+    ['Tarih', 36, 500],
+    ['Gizem', 9648, 400],
+  ];
+
+  for (const [label, genreId, target] of thinGenres) {
+    sweeps.push({
+      label: `tür ${label}`,
+      params: {
+        sort_by: 'vote_count.desc',
+        'vote_count.gte': String(TIER_THREE_MIN_VOTES),
+        with_genres: String(genreId),
+      },
+      target,
+      minVotes: TIER_THREE_MIN_VOTES,
+    });
+  }
+
+  // Kademe 3 dil taramaları.
+  //
+  // Bölge taramaları `with_origin_country` kullanıyor ve bu doğru bir tercih —
+  // Türk-Alman ortak yapımı bir film dile göre kaçıyor, ülkeye göre kaçmıyor.
+  // Ama tersi de doğru: ülkeye göre taranmayan bir dil hiç görünmüyor. İkisi
+  // birbirinin yerine değil, yanına.
+  //
+  // Buradaki diller `TIER_TWO_LANGUAGES` dışında kalanlar, yani sorgu anında
+  // 50 oy tabanıyla değerlendirilenler. fr/it/ja/es burada yok: onlar zaten
+  // bölge taramalarından bol bol geliyor ve kendi kademelerinde 150 istiyorlar.
+  const tierThreeLanguages = [
+    'tr', 'de', 'ru', 'pt', 'ko', 'zh', 'cn', 'hi', 'pl', 'sv', 'da', 'no',
+    'nl', 'fi', 'cs', 'hu', 'el', 'ar', 'fa', 'th', 'ta', 'te', 'he', 'ro',
+    'uk', 'id', 'ml',
+  ];
+
+  for (const language of tierThreeLanguages) {
+    sweeps.push({
+      label: `dil ${language}`,
+      params: {
+        sort_by: 'vote_count.desc',
+        'vote_count.gte': String(TIER_THREE_MIN_VOTES),
+        with_original_language: language,
+      },
+      // TMDB'de kademe 3 dillerinin ≥50 oylu havuzları 22 (uk) ile 641 (de)
+      // arasında; tek bir hedef hepsine yetiyor ve havuz bitince tarama
+      // kendiliğinden duruyor.
+      target: 300,
+      minVotes: TIER_THREE_MIN_VOTES,
+    });
+  }
+
   return sweeps;
 }
 
@@ -400,6 +489,7 @@ async function fetchDiscover(
   page: number
 ): Promise<TMDBResponse> {
   const query = new URLSearchParams({
+    ...BASE_DISCOVER_PARAMS,
     ...params,
     include_adult: 'false',
     page: String(page),
@@ -436,6 +526,29 @@ async function clearMovies(): Promise<void> {
  *  `media_type` süzgeci şart: tablo dizileri de taşıyor ve bir dizinin TMDB
  *  kimliği `/movie/` altında bambaşka bir filme denk geliyor. Süzgeçsiz bir
  *  tazeleme o filmleri tabloya yeni satır olarak eklerdi. */
+/**
+ * `discover` taramasının "bunu zaten aldık" listesi.
+ *
+ * `getAllTmdbIds`ten farkı tür bağı koşulu, ve sebebi toplu yazım: film satırı
+ * anında yazılıyor ama bağlantıları tamponda birikiyor. Betik iki boşaltma
+ * arasında kesilirse geriye tür bağı olmayan satırlar kalır — ve bunlar tür
+ * filtresine hiç görünmez. Bu listede olmadıkları için bir sonraki koşuda
+ * yeniden çekilip tamamlanıyorlar; upsert `ON CONFLICT` olduğu için `id`
+ * değişmiyor.
+ *
+ * TMDB'de gerçekten hiç türü olmayan bir avuç film her koşuda yeniden
+ * çekiliyor. Karşılığı birkaç istek; kaybolan satır riskine değer.
+ */
+async function getSeededTmdbIds(): Promise<number[]> {
+  const result = await pool.query<{ tmdb_id: number }>(
+    `SELECT tmdb_id FROM movies m
+     WHERE m.media_type = 'movie'
+       AND EXISTS (SELECT 1 FROM movie_genres g WHERE g.movie_id = m.id)
+     ORDER BY m.id`
+  );
+  return result.rows.map((r) => r.tmdb_id);
+}
+
 async function getAllTmdbIds(): Promise<number[]> {
   const result = await pool.query<{ tmdb_id: number }>(
     "SELECT tmdb_id FROM movies WHERE media_type = 'movie' ORDER BY id"
@@ -450,14 +563,19 @@ async function getExistingMovieCount(): Promise<number> {
   return parseInt(result.rows[0].count, 10);
 }
 
-/** İngilizce yapımların sorgu anındaki oy eşiği (config.selection.minVoteCount).
+/** Bir taramanın alabileceği en düşük oy sayısı dile göre değişiyor ve
+ *  `minVotesForLanguage` bunu tek yerden veriyor.
  *
- *  Bölgesel taramalar `with_origin_country` ile çalışıyor ve İrlanda ya da
- *  Birleşik Krallık gibi ülkeler İngilizce film döndürüyor. Bölge eşiği (150)
- *  ile alınan İngilizce bir film tabloya girer ama sorgu eşiğini (500)
- *  geçemeyeceği için hiç gösterilmez — görünmez satır biriktirmenin anlamı
- *  yok. Bu değer `config.selection.minVoteCount` ile aynı kalmalı. */
-const ENGLISH_QUERY_VOTE_FLOOR = 500;
+ *  Neden gerekli: tarama parametreleri dili kısıtlamıyor. Bölgesel taramalar
+ *  `with_origin_country` ile çalışıyor ve İrlanda İngilizce film döndürüyor;
+ *  tür taramaları ise bütün dilleri kapsıyor, yani 60 oylu bir Fransız filmi
+ *  de geliyor. İkisi de tabloya girer ve hiç gösterilmez — sorgu İngilizceden
+ *  500, Fransızcadan 150 istiyor. Tarama eşiği bu tabanı yalnızca
+ *  yükseltebilir. */
+
+/** Kademe 3 dillerinin sorgu anındaki oy tabanı. Taramalar bunun altına
+ *  inmemeli: alınan satır tabloya girer ama hiç gösterilmez. */
+const TIER_THREE_MIN_VOTES = config.selection.minVoteCountTierThree;
 
 async function upsertMovie(movie: TMDBMovie, minVotes: number): Promise<number | null> {
   // Skip if missing required fields
@@ -471,9 +589,21 @@ async function upsertMovie(movie: TMDBMovie, minVotes: number): Promise<number |
   }
 
   // Skip if below quality threshold
-  const floor =
-    movie.original_language === 'en' ? Math.max(minVotes, ENGLISH_QUERY_VOTE_FLOOR) : minVotes;
+  const floor = Math.max(minVotes, minVotesForLanguage(movie.original_language, 'movie'));
   if (movie.vote_count < floor) {
+    return null;
+  }
+
+  // Süre ve puan tabanları da sorgu anındaki eşiklerle aynı olmak zorunda.
+  // Discover parametreleri bunları kısıtlıyor ama tek başlarına yetmiyor:
+  // liste yanıtında `runtime` alanı hiç yok, ve tarama parametreleri
+  // değiştiğinde burası sessizce açık kalır. Bu koruma olmadan katalogda
+  // 1 dakikalık Lumière filmleri ve 5,5 altı puanlı satırlar birikti —
+  // hepsi tabloya girip hiçbir sorguya görünmedi.
+  if (!movie.runtime || movie.runtime < config.selection.minRuntime) {
+    return null;
+  }
+  if (movie.vote_average < config.selection.minVoteAverage) {
     return null;
   }
 
@@ -540,45 +670,8 @@ async function upsertMovie(movie: TMDBMovie, minVotes: number): Promise<number |
   return result.rows[0].id;
 }
 
-// Junction tablolarına satır başına bir sorgu atmak yerel veritabanında
-// önemsizdi; uzak bir Postgres'te her sorgu bir gidiş-dönüş demek. 2.129 filmi
-// yenilerken bu, on binlerce gidiş-dönüşe ve saatlere dönüşüyor. Hepsi tek
-// çok satırlı INSERT'e indirildi.
-async function linkMovieGenres(movieId: number, genreIds: number[]): Promise<void> {
-  if (genreIds.length === 0) return;
-  await pool.query(
-    `INSERT INTO movie_genres (movie_id, genre_id)
-     SELECT $1, unnest($2::int[])
-     ON CONFLICT DO NOTHING`,
-    [movieId, genreIds]
-  );
-}
-
-async function linkMovieKeywords(
-  movieId: number,
-  keywords: { id: number; name: string }[]
-): Promise<void> {
-  if (keywords.length === 0) return;
-
-  const ids = keywords.map((k) => k.id);
-  const names = keywords.map((k) => k.name);
-
-  // Anahtar kelime sözlüğü paylaşılıyor: aynı "time travel" binlerce filmde
-  // geçiyor, her seferinde yeniden yazmak yerine upsert.
-  await pool.query(
-    `INSERT INTO keywords (id, name)
-     SELECT * FROM unnest($1::int[], $2::text[])
-     ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name`,
-    [ids, names]
-  );
-  await pool.query(
-    `INSERT INTO movie_keywords (movie_id, keyword_id)
-     SELECT $1, unnest($2::int[])
-     ON CONFLICT DO NOTHING`,
-    [movieId, ids]
-  );
-}
-
+// Bağlantı satırları artık doğrudan yazılmıyor, `LinkBuffer`'da birikip
+// toplu boşaltılıyor — gerekçesi scripts/link-buffer.ts başında.
 /** TMDB kimi çeviriyi görünmez yön işaretleriyle sarmalıyor — "The Office"in
  *  Türkçesi "\u200eOfis\u200e" olarak geliyor. Ekranda görünmüyorlar ama
  *  karşılaştırmayı bozuyorlar, o yüzden `trim` yetmiyor. */
@@ -609,32 +702,19 @@ function extractTranslations(
   return out;
 }
 
-async function linkMovieTranslations(
-  movieId: number,
-  translations: { language: string; title: string }[]
-): Promise<void> {
-  if (translations.length === 0) return;
-  await pool.query(
-    `INSERT INTO movie_translations (movie_id, language_code, title)
-     SELECT $1, * FROM unnest($2::text[], $3::text[])
-     ON CONFLICT (movie_id, language_code) DO UPDATE SET title = EXCLUDED.title`,
-    [movieId, translations.map((t) => t.language), translations.map((t) => t.title)]
-  );
-}
-
-async function linkMovieCountries(
-  movieId: number,
-  countries: { iso_3166_1: string }[]
-): Promise<void> {
-  if (countries.length === 0) return;
-  const codes = countries.map((c) => c.iso_3166_1);
-  // `countries` tablosunda 40 ülke var; listede olmayan bir kod sessizce düşer.
-  await pool.query(
-    `INSERT INTO movie_countries (movie_id, country_code)
-     SELECT $1, c.code FROM countries c WHERE c.code = ANY($2)
-     ON CONFLICT DO NOTHING`,
-    [movieId, codes]
-  );
+/** Bir filmin tüm bağlantı satırlarını tampona yazar. Üç seed döngüsü de
+ *  aynı dört tabloyu dolduruyordu; tek yerde toplandı. */
+function bufferLinks(links: LinkBuffer, movieId: number, details: TMDBMovie): void {
+  if (details.genres) {
+    links.addGenres(movieId, details.genres.map((g) => g.id));
+  }
+  if (details.production_countries) {
+    links.addCountries(movieId, details.production_countries.map((c) => c.iso_3166_1));
+  }
+  if (details.keywords?.keywords?.length) {
+    links.addKeywords(movieId, details.keywords.keywords);
+  }
+  links.addTranslations(movieId, extractTranslations(details.translations?.translations));
 }
 
 // ============================================================================
@@ -668,6 +748,8 @@ async function refresh(): Promise<void> {
     startTime: Date.now(),
   };
 
+  const links = new LinkBuffer();
+
   for (const tmdbId of tmdbIds) {
     progress.processed++;
     try {
@@ -681,19 +763,8 @@ async function refresh(): Promise<void> {
       const movieId = await upsertMovie(details, 0);
       if (movieId) {
         progress.inserted++;
-        if (details.genres) {
-          await linkMovieGenres(movieId, details.genres.map((g) => g.id));
-        }
-        if (details.production_countries) {
-          await linkMovieCountries(movieId, details.production_countries);
-        }
-        if (details.keywords?.keywords?.length) {
-          await linkMovieKeywords(movieId, details.keywords.keywords);
-        }
-        await linkMovieTranslations(
-          movieId,
-          extractTranslations(details.translations?.translations)
-        );
+        bufferLinks(links, movieId, details);
+        if (links.shouldFlush) await links.flush();
       } else {
         progress.skipped++;
       }
@@ -703,6 +774,8 @@ async function refresh(): Promise<void> {
 
     printProgress(progress, tmdbIds.length);
   }
+
+  await links.flush();
 
   const elapsed = Date.now() - progress.startTime;
   const enriched = await pool.query<{ n: string }>(
@@ -733,8 +806,14 @@ async function refresh(): Promise<void> {
  * hiçbir getirisi yok.
  */
 async function discoverSeed(options: SeedOptions): Promise<void> {
-  const sweeps = buildSweeps(options.count);
-  const existing = new Set(await getAllTmdbIds());
+  const sweeps = buildSweeps(options.count).filter(
+    (sweep) => !options.only || sweep.label.startsWith(options.only)
+  );
+  if (sweeps.length === 0) {
+    console.error(`\n  ❌ "${options.only}" önekiyle eşleşen tarama yok\n`);
+    process.exit(1);
+  }
+  const existing = new Set(await getSeededTmdbIds());
   const before = existing.size;
 
   console.log(`
@@ -749,6 +828,7 @@ async function discoverSeed(options: SeedOptions): Promise<void> {
 
   const totals = { added: 0, skippedExisting: 0, skippedQuality: 0, errors: 0 };
   const startedAt = Date.now();
+  const links = new LinkBuffer();
 
   for (const sweep of sweeps) {
     let added = 0;
@@ -784,19 +864,8 @@ async function discoverSeed(options: SeedOptions): Promise<void> {
           if (movieId) {
             added++;
             totals.added++;
-            if (details.genres) {
-              await linkMovieGenres(movieId, details.genres.map((g) => g.id));
-            }
-            if (details.production_countries) {
-              await linkMovieCountries(movieId, details.production_countries);
-            }
-            if (details.keywords?.keywords?.length) {
-              await linkMovieKeywords(movieId, details.keywords.keywords);
-            }
-            await linkMovieTranslations(
-              movieId,
-              extractTranslations(details.translations?.translations)
-            );
+            bufferLinks(links, movieId, details);
+            if (links.shouldFlush) await links.flush();
           } else {
             totals.skippedQuality++;
           }
@@ -809,6 +878,9 @@ async function discoverSeed(options: SeedOptions): Promise<void> {
       await sleep(RATE_LIMIT_DELAY);
     }
 
+    // Tarama sonunda boşalt: bir sonraki taramaya taşmasın, ve kesilme
+    // hâlinde en fazla bir taramanın bağlantıları kaybolsun.
+    await links.flush();
     console.log(`+${added}`);
   }
 
@@ -883,6 +955,8 @@ async function seed(options: SeedOptions): Promise<void> {
 
   console.log('  Fetching movies from TMDB...\n');
 
+  const links = new LinkBuffer();
+
   for (const { name, fetcher } of endpoints) {
     if (progress.inserted >= options.count) break;
 
@@ -908,27 +982,8 @@ async function seed(options: SeedOptions): Promise<void> {
             if (movieId) {
               progress.inserted++;
 
-              // Link genres
-              if (details.genres) {
-                await linkMovieGenres(
-                  movieId,
-                  details.genres.map((g) => g.id)
-                );
-              }
-
-              // Link countries
-              if (details.production_countries) {
-                await linkMovieCountries(movieId, details.production_countries);
-              }
-
-              // Link keywords
-              if (details.keywords?.keywords?.length) {
-                await linkMovieKeywords(movieId, details.keywords.keywords);
-              }
-              await linkMovieTranslations(
-                movieId,
-                extractTranslations(details.translations?.translations)
-              );
+              bufferLinks(links, movieId, details);
+              if (links.shouldFlush) await links.flush();
             } else {
               progress.skipped++;
             }
@@ -946,6 +1001,8 @@ async function seed(options: SeedOptions): Promise<void> {
       }
     }
   }
+
+  await links.flush();
 
   // Final output
   const elapsed = Date.now() - progress.startTime;

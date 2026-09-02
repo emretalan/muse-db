@@ -17,8 +17,9 @@
  */
 
 import { pool } from '../src/db/client.js';
-import { TRANSLATION_REGIONS } from '../src/services/languages.js';
+import { TRANSLATION_REGIONS, minVotesForLanguage } from '../src/services/languages.js';
 import { config } from '../src/config.js';
+import { LinkBuffer } from './link-buffer.js';
 
 // ============================================================================
 // Types
@@ -96,11 +97,12 @@ const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 const RATE_LIMIT_DELAY = 50;
 const CERTIFICATION_PREFERENCE = ['US', 'GB'];
 
-/** İngilizce dizilerin sorgu anındaki oy eşiği
- *  (config.selection.minVoteCountTv). Bölgesel taramalar İrlanda gibi
- *  İngilizce konuşan ülkeleri de kapsıyor; bölge eşiğiyle (50-100) alınan
- *  İngilizce bir dizi tabloya girer ama hiç gösterilmez. */
-const ENGLISH_QUERY_VOTE_FLOOR = 200;
+/** Kademe 3 dillerinin sorgu anındaki oy tabanı; taramalar bunun altına
+ *  inmemeli. Dil bazlı taban `minVotesForLanguage` ile geliyor: bir tarama
+ *  bütün dilleri kapsıyor olabilir (tür taramaları öyle) ve İngilizceden 200,
+ *  Japoncadan 50 isteyen sorgunun altında kalan satır tabloya girip hiç
+ *  gösterilmez. */
+const TIER_THREE_MIN_VOTES = config.selection.minVoteCountTvTierThree;
 
 /** Bir bölümün alt sınırı. Filmlerdeki 60 dakika burada anlamsız: bir sitcom
  *  bölümü 22 dakika. Bu eşik yalnızca fragman/teaser kayıtlarını eliyor. */
@@ -139,8 +141,21 @@ async function fetchFirstEpisode(seriesId: number): Promise<TMDBEpisode | null> 
   }
 }
 
+/** Her taramanın taşıdığı taban parametre — gerekçesi seed-movies.ts'teki eşi.
+ *  Süre burada yok: dizide filtre ilk bölümün süresi üzerinde çalışıyor ve o
+ *  değer discover yanıtında hiç bulunmuyor, ancak bölüm çekildikten sonra
+ *  biliniyor. */
+const BASE_DISCOVER_PARAMS: Record<string, string> = {
+  'vote_average.gte': String(config.selection.minVoteAverage),
+};
+
 async function fetchDiscover(params: Record<string, string>, page: number): Promise<TMDBResponse> {
-  const query = new URLSearchParams({ ...params, include_adult: 'false', page: String(page) });
+  const query = new URLSearchParams({
+    ...BASE_DISCOVER_PARAMS,
+    ...params,
+    include_adult: 'false',
+    page: String(page),
+  });
   return fetchFromTMDB<TMDBResponse>(`/discover/tv?${query.toString()}`);
 }
 
@@ -227,12 +242,18 @@ function buildSweeps(perDecade: number): Sweep[] {
   // belgesel ve 12 realite vardı, oysa TMDB'de sırasıyla 339 ve 193 var.
   // Uygulamanın tür ekranındaki bir kartın karşılığının boş olması, o kartı
   // hiç göstermemekten daha kötü.
+  // Hedefler TMDB'de ≥20 oylu havuzlarla hizalı (ölçüldü): belgesel 885,
+  // realite 490, savaş&politika 336, pembe dizi 363, çocuk 705, talk 100,
+  // western 88, haber 35.
   const thinGenres: [string, number, number][] = [
-    ['Belgesel', 99, 150],
-    ['Realite', 10764, 150],
-    ['Savaş ve Politika', 10768, 150],
-    ['Pembe Dizi', 10766, 150],
-    ['Çocuk', 10762, 150],
+    ['Belgesel', 99, 400],
+    ['Realite', 10764, 300],
+    ['Savaş ve Politika', 10768, 250],
+    ['Pembe Dizi', 10766, 250],
+    ['Çocuk', 10762, 400],
+    ['Talk', 10767, 100],
+    ['Western', 37, 90],
+    ['Haber', 10763, 40],
   ];
 
   for (const [label, genreId, target] of thinGenres) {
@@ -240,11 +261,33 @@ function buildSweeps(perDecade: number): Sweep[] {
       label: `tür ${label}`,
       params: {
         sort_by: 'vote_count.desc',
-        'vote_count.gte': '50',
+        'vote_count.gte': String(TIER_THREE_MIN_VOTES),
         with_genres: String(genreId),
       },
       target,
-      minVotes: 50,
+      minVotes: TIER_THREE_MIN_VOTES,
+    });
+  }
+
+  // Kademe 3 dil taramaları — filmdeki eşinin gerekçesi seed-movies.ts'te.
+  // Bölge taramaları ülkeye bakıyor, bunlar dile; ikisi birbirinin yerine
+  // değil, yanına.
+  const tierThreeLanguages = [
+    'tr', 'de', 'ru', 'pt', 'ko', 'zh', 'cn', 'hi', 'pl', 'sv', 'da', 'no',
+    'nl', 'fi', 'cs', 'hu', 'el', 'ar', 'fa', 'th', 'ta', 'te', 'he', 'ro',
+    'uk', 'id',
+  ];
+
+  for (const language of tierThreeLanguages) {
+    sweeps.push({
+      label: `dil ${language}`,
+      params: {
+        sort_by: 'vote_count.desc',
+        'vote_count.gte': String(TIER_THREE_MIN_VOTES),
+        with_original_language: language,
+      },
+      target: 200,
+      minVotes: TIER_THREE_MIN_VOTES,
     });
   }
 
@@ -255,9 +298,19 @@ function buildSweeps(perDecade: number): Sweep[] {
 // Database
 // ============================================================================
 
+/**
+ * "Bunu zaten aldık" listesi — tür bağı koşuluyla.
+ *
+ * Dizi satırı anında yazılıyor ama bağlantıları `LinkBuffer`'da birikiyor.
+ * Betik iki boşaltma arasında kesilirse tür bağı olmayan satırlar kalır ve
+ * tür filtresine hiç görünmezler. Listede olmadıkları için bir sonraki koşuda
+ * tamamlanıyorlar; upsert `ON CONFLICT` olduğu için `id` değişmiyor.
+ */
 async function getExistingTvIds(): Promise<Set<number>> {
   const result = await pool.query<{ tmdb_id: number }>(
-    "SELECT tmdb_id FROM movies WHERE media_type = 'tv'"
+    `SELECT tmdb_id FROM movies m
+     WHERE m.media_type = 'tv'
+       AND EXISTS (SELECT 1 FROM movie_genres g WHERE g.movie_id = m.id)`
   );
   return new Set(result.rows.map((r) => r.tmdb_id));
 }
@@ -270,9 +323,12 @@ async function upsertSeries(
   if (!series.name || !series.first_air_date) return null;
   if (series.adult) return null;
   if (!series.poster_path) return null;
-  const floor =
-    series.original_language === 'en' ? Math.max(minVotes, ENGLISH_QUERY_VOTE_FLOOR) : minVotes;
+  const floor = Math.max(minVotes, minVotesForLanguage(series.original_language, 'tv'));
   if (series.vote_count < floor) return null;
+  // Puan tabanı da sorgu anındaki eşikle aynı olmalı; yoksa satır tabloya
+  // girer ve hiçbir sorguya görünmez. (Süre kontrolü aşağıda, ilk bölümün
+  // süresi elde edildikten sonra.)
+  if (series.vote_average < config.selection.minVoteAverage) return null;
 
   const year = parseInt(series.first_air_date.substring(0, 4), 10);
   if (isNaN(year)) return null;
@@ -346,26 +402,6 @@ async function upsertSeries(
   return result.rows[0].id;
 }
 
-async function linkGenres(movieId: number, genreIds: number[]): Promise<void> {
-  if (genreIds.length === 0) return;
-  await pool.query(
-    `INSERT INTO movie_genres (movie_id, genre_id)
-     SELECT $1, unnest($2::int[])
-     ON CONFLICT DO NOTHING`,
-    [movieId, genreIds]
-  );
-}
-
-async function linkCountries(movieId: number, codes: string[]): Promise<void> {
-  if (codes.length === 0) return;
-  await pool.query(
-    `INSERT INTO movie_countries (movie_id, country_code)
-     SELECT $1, c.code FROM countries c WHERE c.code = ANY($2)
-     ON CONFLICT DO NOTHING`,
-    [movieId, codes]
-  );
-}
-
 /** TMDB kimi çeviriyi görünmez yön işaretleriyle sarmalıyor — "The Office"in
  *  Türkçesi "\u200eOfis\u200e" olarak geliyor. Ekranda görünmüyorlar ama
  *  karşılaştırmayı bozuyorlar, o yüzden `trim` yetmiyor. */
@@ -390,34 +426,21 @@ function extractTranslations(
   return out;
 }
 
-async function linkTranslations(
-  movieId: number,
-  translations: { language: string; title: string }[]
-): Promise<void> {
-  if (translations.length === 0) return;
-  await pool.query(
-    `INSERT INTO movie_translations (movie_id, language_code, title)
-     SELECT $1, * FROM unnest($2::text[], $3::text[])
-     ON CONFLICT (movie_id, language_code) DO UPDATE SET title = EXCLUDED.title`,
-    [movieId, translations.map((t) => t.language), translations.map((t) => t.title)]
-  );
-}
-
-async function linkKeywords(movieId: number, keywords: { id: number; name: string }[]): Promise<void> {
-  if (keywords.length === 0) return;
-  const ids = keywords.map((k) => k.id);
-  await pool.query(
-    `INSERT INTO keywords (id, name)
-     SELECT * FROM unnest($1::int[], $2::text[])
-     ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name`,
-    [ids, keywords.map((k) => k.name)]
-  );
-  await pool.query(
-    `INSERT INTO movie_keywords (movie_id, keyword_id)
-     SELECT $1, unnest($2::int[])
-     ON CONFLICT DO NOTHING`,
-    [movieId, ids]
-  );
+/** Bir dizinin tüm bağlantı satırlarını tampona yazar. Doğrudan yazım yerine
+ *  toplu boşaltma — gerekçesi scripts/link-buffer.ts başında. */
+function bufferLinks(links: LinkBuffer, movieId: number, series: TMDBSeries): void {
+  if (series.genres) {
+    links.addGenres(movieId, series.genres.map((g) => g.id));
+  }
+  if (series.production_countries) {
+    links.addCountries(movieId, series.production_countries.map((c) => c.iso_3166_1));
+  }
+  // Dizide anahtar kelimeler `results` altında — filmdeki `keywords` değil.
+  // Aynı ada sahip iki farklı şekil.
+  if (series.keywords?.results?.length) {
+    links.addKeywords(movieId, series.keywords.results);
+  }
+  links.addTranslations(movieId, extractTranslations(series.translations?.translations));
 }
 
 // ============================================================================
@@ -446,6 +469,7 @@ async function refresh(): Promise<void> {
 `);
 
   const totals = { updated: 0, skipped: 0, errors: 0 };
+  const links = new LinkBuffer();
   const startedAt = Date.now();
 
   for (const [index, tmdbId] of ids.entries()) {
@@ -471,14 +495,8 @@ async function refresh(): Promise<void> {
 
       totals.updated++;
 
-      if (series.genres) await linkGenres(movieId, series.genres.map((g) => g.id));
-      if (series.production_countries) {
-        await linkCountries(movieId, series.production_countries.map((c) => c.iso_3166_1));
-      }
-      if (series.keywords?.results?.length) {
-        await linkKeywords(movieId, series.keywords.results);
-      }
-      await linkTranslations(movieId, extractTranslations(series.translations?.translations));
+      bufferLinks(links, movieId, series);
+      if (links.shouldFlush) await links.flush();
     } catch {
       totals.errors++;
     }
@@ -489,6 +507,8 @@ async function refresh(): Promise<void> {
       );
     }
   }
+
+  await links.flush();
 
   const elapsed = Math.round((Date.now() - startedAt) / 1000);
   console.log(`\n\n  ✓ ${totals.updated} dizi tazelendi (${elapsed} sn)\n`);
@@ -535,6 +555,7 @@ async function main(): Promise<void> {
 `);
 
   const totals = { added: 0, existing: 0, noEpisode: 0, quality: 0, errors: 0 };
+  const links = new LinkBuffer();
   const startedAt = Date.now();
 
   for (const sweep of sweeps) {
@@ -581,19 +602,8 @@ async function main(): Promise<void> {
           added++;
           totals.added++;
 
-          if (series.genres) await linkGenres(movieId, series.genres.map((g) => g.id));
-          if (series.production_countries) {
-            await linkCountries(movieId, series.production_countries.map((c) => c.iso_3166_1));
-          }
-          // Dizide anahtar kelimeler `results` altında — filmdeki `keywords`
-          // değil. Aynı ada sahip iki farklı şekil.
-          if (series.keywords?.results?.length) {
-            await linkKeywords(movieId, series.keywords.results);
-          }
-          await linkTranslations(
-            movieId,
-            extractTranslations(series.translations?.translations)
-          );
+          bufferLinks(links, movieId, series);
+          if (links.shouldFlush) await links.flush();
         } catch {
           totals.errors++;
         }
@@ -603,6 +613,9 @@ async function main(): Promise<void> {
       await sleep(RATE_LIMIT_DELAY);
     }
 
+    // Tarama sonunda boşalt: kesilme hâlinde en fazla bir taramanın
+    // bağlantıları kaybolsun.
+    await links.flush();
     console.log(`+${added}`);
   }
 
