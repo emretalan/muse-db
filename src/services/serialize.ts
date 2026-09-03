@@ -50,6 +50,7 @@ export function toMovie(
     lastYear: yearOf(row.last_air_date),
     pledgeKind: pledgeKindOf(row),
     totalMinutes: totalMinutesOf(row),
+    runtimeEstimated: row.runtime_estimated ?? false,
   };
 }
 

@@ -14,6 +14,10 @@
  * S01E01 de çekiliyor ve `runtime`/`year` sütunlarına ilk bölümün süresi ve
  * yılı yazılıyor, böylece süre ve dönem filtreleri tek satır değişmeden
  * dizide de çalışıyor.
+ *
+ * TMDB bölüm belgesinde süreyi çoğu telenovelada boş bırakıyor; o durumda
+ * dizinin kendi `episode_run_time` alanından kestiriliyor ve satır
+ * `runtime_estimated` ile işaretleniyor. Bkz. `episodeRuntimeOf`.
  */
 
 import { pool } from '../src/db/client.js';
@@ -47,6 +51,9 @@ interface TMDBSeries {
   status?: string;
   number_of_seasons?: number;
   number_of_episodes?: number;
+  /** Dizinin kendi sayfasındaki tipik bölüm süresi/süreleri. S01E01
+   *  belgesinde süre yoksa `episodeRuntimeOf` buradan kestiriyor. */
+  episode_run_time?: number[];
   genres?: { id: number; name: string }[];
   production_countries?: { iso_3166_1: string; name: string }[];
   networks?: { id: number; name: string }[];
@@ -109,8 +116,26 @@ const CERTIFICATION_PREFERENCE = ['US', 'GB'];
 const TIER_THREE_MIN_VOTES = config.selection.minVoteCountTvTierThree;
 
 /** Bir bölümün alt sınırı. Filmlerdeki 60 dakika burada anlamsız: bir sitcom
- *  bölümü 22 dakika. Bu eşik yalnızca fragman/teaser kayıtlarını eliyor. */
+ *  bölümü 22 dakika.
+ *
+ *  Bu eşiğin "yalnızca fragman/teaser kayıtlarını elediği" yazıyordu; ölçünce
+ *  öyle olmadığı görüldü. Gerçekte elediği başlıklar arasında SpongeBob
+ *  SquarePants (9 dk, 3.261 oy), Doraemon (7), Oggy and the Cockroaches (7),
+ *  Caméra Café (7) ve Super Dragon Ball Heroes (8) var — hiçbiri fragman
+ *  değil, hepsi kısa formatın kendisi.
+ *
+ *  Eşik yine de duruyor, çünkü sorun veri değil tören: Muse'ün sözü "bu akşam,
+ *  bir hikâye" ve 7 dakikalık bir bölüm bir akşam etmiyor. Ama artık bunun bir
+ *  ürün kararı olduğu yazılı; bir gün kısa format ayrı bir kutu olarak
+ *  açılırsa değişecek yer burası. */
 const MIN_EPISODE_RUNTIME = 10;
+
+/** Kestirimin üst sınırı. `episode_run_time` bazen bölümün değil bütün
+ *  mini dizinin süresini taşıyor — *Scenes from a Marriage* 297 dakika
+ *  diyor, gerçek ilk bölüm 52. Ölçüldü: bu sınır 292 dizinin yalnızca
+ *  ikisini kesiyor ve ikisi de doğru kesiliyor. Yalnızca kestirime
+ *  uygulanıyor; gerçek S01E01 süresi ne diyorsa o yazılıyor. */
+const MAX_ESTIMATED_RUNTIME = 240;
 
 // ============================================================================
 // Helpers
@@ -143,6 +168,48 @@ async function fetchFirstEpisode(seriesId: number): Promise<TMDBEpisode | null> 
   } catch {
     return null;
   }
+}
+
+/**
+ * Sözün üzerine verilecek bölümün süresi, ve o sürenin gerçek mi kestirim mi
+ * olduğu.
+ *
+ * Sıra hiç değişmiyor: **S01E01'in kendi süresi varsa her zaman o.** Kestirim
+ * yalnızca o yokken devreye giriyor, çünkü `episode_run_time` tipik bölümü
+ * anlatıyor ve uzun metraj pilotu olan diziler için yanlış sayı — söz ilk
+ * bölüm üzerineyse pilotun kendi süresi doğru olan.
+ *
+ * Kestirim medyan alıyor. Dizilerin yalnızca %3'ü birden fazla değer taşıyor,
+ * yani seçim çoğu satırda hiçbir şeyi değiştirmiyor; ölçüldüğünde ilk değer,
+ * medyan, en küçük ve en büyük birbirinden ayırt edilemedi (hepsinde ±5 dk
+ * içinde %82–84). Medyan, ayırt edilemeyenler arasından uç değere en az
+ * teslim olanı.
+ *
+ * Süre hiçbir yerden gelmiyorsa `null` — o dizi yine alınmıyor. Süre filtresi
+ * o sayının üzerinde çalışıyor ve uydurulmuş bir sayı, eksik olandan kötü.
+ */
+function episodeRuntimeOf(
+  series: TMDBSeries,
+  episode: TMDBEpisode
+): { runtime: number; estimated: boolean } | null {
+  const real = episode.runtime ?? null;
+  if (real && real >= MIN_EPISODE_RUNTIME) return { runtime: real, estimated: false };
+
+  // Gerçek süre var ama eşiğin altında: kısa formatın kendisi. Kestirime
+  // düşmek burada bir kaçamak olurdu — sayı biliniyor, kararı o veriyor.
+  if (real) return null;
+
+  const candidates = (series.episode_run_time ?? []).filter((n) => n > 0);
+  if (candidates.length === 0) return null;
+
+  const sorted = [...candidates].sort((a, b) => a - b);
+  const middle = sorted.length >> 1;
+  const median = sorted.length % 2
+    ? sorted[middle]
+    : Math.round((sorted[middle - 1] + sorted[middle]) / 2);
+
+  if (median < MIN_EPISODE_RUNTIME || median > MAX_ESTIMATED_RUNTIME) return null;
+  return { runtime: median, estimated: true };
 }
 
 /** Her taramanın taşıdığı taban parametre — gerekçesi seed-movies.ts'teki eşi.
@@ -356,10 +423,11 @@ async function upsertSeries(
   const year = parseInt(series.first_air_date.substring(0, 4), 10);
   if (isNaN(year)) return null;
 
-  // Sözün üzerine verileceği bölümün süresi bilinmiyorsa dizi alınmıyor:
-  // süre filtresi o sayının üzerinde çalışıyor.
-  const runtime = episode.runtime ?? null;
-  if (!runtime || runtime < MIN_EPISODE_RUNTIME) return null;
+  // Sözün üzerine verileceği bölümün süresi hiçbir kaynaktan gelmiyorsa dizi
+  // alınmıyor: süre filtresi o sayının üzerinde çalışıyor.
+  const measured = episodeRuntimeOf(series, episode);
+  if (!measured) return null;
+  const { runtime, estimated } = measured;
 
   const result = await pool.query<{ id: number }>(
     `INSERT INTO movies (
@@ -367,13 +435,15 @@ async function upsertSeries(
       poster_path, vote_average, vote_count, original_language, adult,
       backdrop_path, tagline, imdb_id, popularity, status, certification, directors,
       first_air_date, last_air_date, number_of_seasons, number_of_episodes, networks,
-      first_episode_name, first_episode_overview, first_episode_still_path
+      first_episode_name, first_episode_overview, first_episode_still_path,
+      runtime_estimated
     ) VALUES ($1, 'tv', $2, $3, $4, $5, $6, $7, $8, $9, $10, false,
               $11, $12, $13, $14, $15, $16, $17,
-              $18, $19, $20, $21, $22, $23, $24, $25)
+              $18, $19, $20, $21, $22, $23, $24, $25, $26)
     ON CONFLICT (tmdb_id, media_type) DO UPDATE SET
       title = EXCLUDED.title,
       runtime = EXCLUDED.runtime,
+      runtime_estimated = EXCLUDED.runtime_estimated,
       synopsis = EXCLUDED.synopsis,
       poster_path = EXCLUDED.poster_path,
       vote_average = EXCLUDED.vote_average,
@@ -419,6 +489,7 @@ async function upsertSeries(
       episode.name || null,
       episode.overview || null,
       episode.still_path || null,
+      estimated,
     ]
   );
 

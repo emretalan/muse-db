@@ -56,6 +56,14 @@ export interface Movie {
    *  şişiriyor — ölçüldü: *Vinyl*'in pilotu 113 dk, tipik bölümü 60. Ekranda
    *  bu yüzden "≈" ile gösterilmeli. */
   totalMinutes: number | null;
+
+  /** `runtime` ölçülmedi, kestirildi. Yalnızca dizide true olabiliyor.
+   *
+   *  TMDB'nin bölüm belgesinde süre yoksa dizinin kendi `episode_run_time`
+   *  alanının medyanı yazılıyor. Ölçüldü: ikisinin de bilindiği 292 dizide
+   *  %83'ü ±5 dakika içinde, medyan hata 1 dakika. Yeterince iyi, ama
+   *  ölçülmüş bir sayı değil — istemci bu yüzden "≈45 dk" gösteriyor. */
+  runtimeEstimated: boolean;
 }
 
 /** Sözün birimi — bkz. `Movie.pledgeKind`. */
@@ -96,6 +104,9 @@ export interface MovieRow {
   first_episode_name: string | null;
   first_episode_overview: string | null;
   first_episode_still_path: string | null;
+
+  // 016_runtime_estimated ile eklendi.
+  runtime_estimated: boolean | null;
 
   // 013_refinement ile eklendi; ikisi de `scripts/derive-refinement.ts`
   // tarafından türetiliyor, TMDB'den gelmiyor.

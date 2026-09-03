@@ -35,6 +35,11 @@ ALTER TABLE movies ADD COLUMN IF NOT EXISTS first_episode_still_path VARCHAR(255
 --
 --   * Süre filtresi çalışıyor. TMDB'nin `episode_run_time` alanı modern
 --     dizilerin çoğunda boş, ama S01E01'in kendi `runtime`'ı gerçek bir sayı.
+--
+--     DÜZELTME (016): bu cümlenin ilk yarısı ölçülmemişti ve yanlış çıktı —
+--     `episode_run_time` dizilerin %73'ünde dolu. Yanlış olduğu için S01E01
+--     süresi yokken hiçbir yedeğe bakılmadı ve o diziler kütüphaneye hiç
+--     girmedi. 016 yedeği devreye alıyor; ölçüm orada.
 --   * Dönem filtresi çalışıyor. `first_air_date` zaten ilk bölümün yayın
 --     tarihi, yani "2010'lar" sorgusu aralık kesişimi mantığı gerektirmiyor.
 --
