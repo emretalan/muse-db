@@ -14,6 +14,7 @@ import { movieRoutes } from './routes/movie.js';
 import { extrasRoutes } from './routes/extras.js';
 import { refineRoutes } from './routes/refine.js';
 import { tasteRoutes } from './routes/taste.js';
+import { seasonRoutes } from './routes/seasons.js';
 
 export function buildServer() {
   const fastify = Fastify({
@@ -78,6 +79,7 @@ export function buildServer() {
   fastify.register(extrasRoutes);
   fastify.register(refineRoutes);
   fastify.register(tasteRoutes);
+  fastify.register(seasonRoutes);
 
   return fastify;
 }
