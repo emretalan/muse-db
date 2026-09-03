@@ -44,6 +44,7 @@ Server runs at `http://localhost:3000`
 | GET    | /health  | Health check             |
 | GET    | /genres  | List available genres    |
 | POST   | /pick    | Get a movie recommendation |
+| POST   | /taste   | Build a taste profile from a reaction ledger |
 
 ### POST /pick
 
@@ -59,6 +60,48 @@ Server runs at `http://localhost:3000`
   }
 }
 ```
+
+### POST /taste
+
+Turns a ledger of “how was it?” answers into a taste profile. **Nothing is
+stored.** The app holds the reactions (on device and in its own Firestore
+document) and sends them on every refresh; the server joins them against the
+catalogue, answers, and forgets. That split is not a preference — the archive
+row only carries `movieId` and a reaction, and the genres, moods, era and
+origin live only here.
+
+```json
+{
+  "entries": [
+    { "movieId": 550, "reaction": "loved" },
+    { "movieId": 155, "reaction": "not_for_me" }
+  ]
+}
+```
+
+The reply carries the sentences the profile screen renders (`traits`) and the
+compact `vector` the app attaches to its next `/pick`:
+
+```json
+{
+  "answered": 20,
+  "confidence": 1,
+  "totals": { "loved": 14, "fine": 0, "notForMe": 6 },
+  "traits": [{ "kind": "genre", "key": "18", "affinity": 0.52, "count": 14 }],
+  "vector": { "g": { "18": 0.52, "28": -0.72 }, "m": { "tearjerker": 0.43 } },
+  "runtimeLean": null
+}
+```
+
+Two thresholds, both in `src/services/taste.ts`, both there because of cold
+start: under 6 answers `traits` is empty, and under 12 `vector` is `null`.
+Saying what we noticed needs less evidence than acting on it.
+
+`vector` goes back on `/pick` as a sibling of `filters`, never inside it — a
+filter removes titles, this only bends the weight, between 0.5× and 1.5×. The
+floor is deliberately not zero: a genre you have never liked still comes up,
+just less. An adaptive fate that can no longer surprise you is a filter
+wearing fate's clothes.
 
 ## Scripts
 

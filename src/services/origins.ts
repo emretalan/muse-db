@@ -131,3 +131,34 @@ export function expandOrigin(values: string[]): {
     nonEnglishCountries: [...nonEnglishCountries],
   };
 }
+
+/**
+ * Bir başlığın hangi menşe kovasına düştüğü — `expandOrigin`'in tersi.
+ *
+ * Filtreleme yönü ("bu kovada neler var") SQL'de kuruluyor; bu yön ("bu başlık
+ * hangi kovada") zevk profili için gerekti: kullanıcının arşivindeki her
+ * başlığı bir kovaya yazmadan "Avrupa sinemasına hep evet diyorsun" cümlesi
+ * kurulamıyor.
+ *
+ * Kuralı `expandOrigin` ile **birebir aynı** tutmak zorunda, yoksa profilde
+ * "Avrupa" diyeceğiz ama o kovayı seçtiğinde başka bir liste çıkacak: dil
+ * eşleşmesi tek başına yeterli, ülke eşleşmesi İngilizce olmayan kovalarda
+ * yalnızca başlığın dili İngilizce değilse sayılıyor.
+ *
+ * Bir başlık birden fazla kovaya düşebiliyor (Fransız-Alman ortak yapımı gibi
+ * değil — kovalar ayrık; ama ülke listesi birden fazla kovaya değebiliyor).
+ * Böyle bir durumda ilk eşleşen kova dönüyor, çünkü `ORIGIN_BUCKETS` sırası
+ * uygulamadaki kutu sırası ve kullanıcının gördüğü isim o.
+ */
+export function originBucketFor(
+  language: string | null,
+  countries: string[]
+): string | null {
+  const isEnglish = language === 'en';
+  for (const bucket of ORIGIN_BUCKETS) {
+    if (language && bucket.languages.includes(language)) return bucket.slug;
+    const countryHit = countries.some((c) => bucket.countries.includes(c));
+    if (countryHit && (bucket.anglophone || !isEnglish)) return bucket.slug;
+  }
+  return null;
+}

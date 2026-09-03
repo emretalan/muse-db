@@ -13,6 +13,7 @@ import { eraRoutes } from './routes/eras.js';
 import { movieRoutes } from './routes/movie.js';
 import { extrasRoutes } from './routes/extras.js';
 import { refineRoutes } from './routes/refine.js';
+import { tasteRoutes } from './routes/taste.js';
 
 export function buildServer() {
   const fastify = Fastify({
@@ -76,6 +77,7 @@ export function buildServer() {
   // gölgelemiyor.
   fastify.register(extrasRoutes);
   fastify.register(refineRoutes);
+  fastify.register(tasteRoutes);
 
   return fastify;
 }

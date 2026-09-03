@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { pickMovie } from '../services/picker.js';
 import type { PickRequest, PickResponse } from '../types/index.js';
 import { normalizeLanguage } from '../services/languages.js';
+import { sanitizeVector } from '../services/taste.js';
 
 export async function pickRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.post<{ Body: PickRequest; Reply: PickResponse | { error: string } }>(
@@ -14,7 +15,7 @@ export async function pickRoutes(fastify: FastifyInstance): Promise<void> {
         });
       }
 
-      const { sessionId, filters, excludeMovieIds, lang } = body as PickRequest;
+      const { sessionId, filters, excludeMovieIds, lang, taste } = body as PickRequest;
       const language = normalizeLanguage(lang);
       const safeFilters = filters || {};
       const safeExcludeIds = Array.isArray(excludeMovieIds)
@@ -52,7 +53,13 @@ export async function pickRoutes(fastify: FastifyInstance): Promise<void> {
       }
 
       try {
-        const movie = await pickMovie(sessionId, safeFilters, safeExcludeIds, language);
+        const movie = await pickMovie(
+          sessionId,
+          safeFilters,
+          safeExcludeIds,
+          language,
+          sanitizeVector(taste)
+        );
 
         if (!movie) {
           return {

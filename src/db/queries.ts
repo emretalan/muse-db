@@ -1,9 +1,10 @@
 import { pool } from './client.js';
 import type { MovieRow, Genre, PickFilters, Era, MediaType } from '../types/index.js';
 import { config } from '../config.js';
-import { expandOrigin, ORIGIN_BUCKETS } from '../services/origins.js';
+import { expandOrigin, ORIGIN_BUCKETS, originBucketFor } from '../services/origins.js';
 import { TIER_ONE_LANGUAGE, TIER_TWO_SQL } from '../services/languages.js';
 import { MOOD_SLUGS } from '../services/moods.js';
+import type { TasteFacts } from '../services/taste.js';
 import { NETWORK_BUCKETS, expandNetworks } from '../services/networks.js';
 import { AGE_CEILINGS } from '../services/ratings.js';
 import { normalizeRegion } from '../services/providers.js';
@@ -20,6 +21,23 @@ function eraToYearRange(era: Era): { start: number; end: number | null } {
     '2020-now': { start: 2020, end: null },
   };
   return ranges[era];
+}
+
+/**
+ * Bir yılın hangi döneme düştüğü — `eraToYearRange`'in tersi.
+ *
+ * Aralıklar tek yerde dursun diye burada: profil ekranı "seksenlere hep evet
+ * diyorsun" derken törenin dönem kutularıyla aynı sınırları kullanmak zorunda,
+ * yoksa kullanıcı o kutuyu seçtiğinde başka bir liste görüyor.
+ */
+export function eraForYear(year: number | null): Era | null {
+  if (year === null || !Number.isFinite(year)) return null;
+  if (year <= 1979) return 'pre-1980';
+  if (year <= 1989) return '1980-1989';
+  if (year <= 1999) return '1990-1999';
+  if (year <= 2009) return '2000-2009';
+  if (year <= 2019) return '2010-2019';
+  return '2020-now';
 }
 
 // Fetch all genres
@@ -1104,4 +1122,79 @@ export async function getTmdbRef(
   );
   const row = result.rows[0];
   return row ? { tmdbId: row.tmdb_id, mediaType: row.media_type } : null;
+}
+
+/** Kimlik -> tür kimlikleri. `getMoviesGenres` adları döndürüyor ve adlar
+ *  yerelleştirmeye açık; zevk vektörü kimlik üzerinden çalışmak zorunda. */
+export async function getMoviesGenreIds(
+  movieIds: number[]
+): Promise<Map<number, number[]>> {
+  if (movieIds.length === 0) return new Map();
+
+  const result = await pool.query<{ movie_id: number; genre_id: number }>(
+    'SELECT movie_id, genre_id FROM movie_genres WHERE movie_id = ANY($1)',
+    [movieIds]
+  );
+
+  const map = new Map<number, number[]>();
+  for (const row of result.rows) {
+    const ids = map.get(row.movie_id);
+    if (ids) ids.push(row.genre_id);
+    else map.set(row.movie_id, [row.genre_id]);
+  }
+  return map;
+}
+
+/**
+ * Zevk defterindeki başlıkların katalog nitelikleri.
+ *
+ * Tek sorgu: defter 200 satıra kadar çıkabiliyor ve profil ekranı açılırken
+ * dört ayrı gidiş dönüş beklemek görünür bir gecikme demekti.
+ */
+export async function getTasteFacts(
+  movieIds: number[]
+): Promise<Map<number, TasteFacts>> {
+  if (movieIds.length === 0) return new Map();
+
+  const result = await pool.query<{
+    id: number;
+    year: number | null;
+    runtime: number | null;
+    media_type: MediaType;
+    original_language: string | null;
+    moods: string[] | null;
+    genre_ids: number[];
+    countries: string[];
+  }>(
+    `SELECT m.id,
+            m.year,
+            m.runtime,
+            m.media_type,
+            m.original_language,
+            m.moods,
+            COALESCE(array_agg(DISTINCT mg.genre_id)
+                     FILTER (WHERE mg.genre_id IS NOT NULL), '{}') AS genre_ids,
+            COALESCE(array_agg(DISTINCT mc.country_code)
+                     FILTER (WHERE mc.country_code IS NOT NULL), '{}') AS countries
+       FROM movies m
+       LEFT JOIN movie_genres mg ON mg.movie_id = m.id
+       LEFT JOIN movie_countries mc ON mc.movie_id = m.id
+      WHERE m.id = ANY($1)
+      GROUP BY m.id`,
+    [movieIds]
+  );
+
+  const map = new Map<number, TasteFacts>();
+  for (const row of result.rows) {
+    map.set(row.id, {
+      movieId: row.id,
+      genreIds: row.genre_ids ?? [],
+      moods: row.moods ?? [],
+      era: eraForYear(row.year),
+      origin: originBucketFor(row.original_language, row.countries ?? []),
+      runtime: row.runtime,
+      mediaType: row.media_type,
+    });
+  }
+  return map;
 }

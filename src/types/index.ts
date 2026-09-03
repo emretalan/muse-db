@@ -74,6 +74,11 @@ export interface MovieRow {
   first_episode_name: string | null;
   first_episode_overview: string | null;
   first_episode_still_path: string | null;
+
+  // 013_refinement ile eklendi; ikisi de `scripts/derive-refinement.ts`
+  // tarafından türetiliyor, TMDB'den gelmiyor.
+  age_rating: number | null;
+  moods: string[] | null;
 }
 
 export interface Genre {
@@ -151,6 +156,12 @@ export interface PickRequest {
   excludeMovieIds?: number[];
   /** Uygulamanın dili — başlık bu dilde döner. Gönderilmezse İngilizce. */
   lang?: string;
+  /** Zevk vektörü — kaderin ağırlığını eğiyor (bkz. `services/taste.ts`).
+   *
+   *  `filters` içinde **değil**, bilerek: filtre bir şeyi eliyor, bu hiçbir
+   *  şeyi elemiyor. Aynı sebeple gönderilmemesi tamamen geçerli bir durum ve
+   *  yayındaki her sürümün gördüğü davranış bu. */
+  taste?: unknown;
 }
 
 export interface PickResponse {
