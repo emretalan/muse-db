@@ -44,9 +44,22 @@ const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
  *  altında ve ona yakın. */
 const CONCURRENCY = 8;
 
-/** Kaç başlık biriktikten sonra yazılacağı. Başlık başına ~30 satır düşüyor
- *  (24 bölge × ortalama 1,3 sağlayıcı), yani grup başına ~7.500 satır. */
-const BATCH_SIZE = 250;
+/** Kaç başlık biriktikten sonra yazılacağı.
+ *
+ *  250'den 150'ye indi ve sebebi disk: tazeleme turu her başlığın eski
+ *  satırlarını silip yenisini yazıyor, yani her grup kendi büyüklüğü kadar
+ *  ölü satır bırakıyor. 250'lik gruplarla üretim veritabanının diski doldu ve
+ *  Postgres çöktü. Küçük grup + araya serpiştirilmiş VACUUM, tepe kullanımı
+ *  düşürüyor. */
+const BATCH_SIZE = 150;
+
+/** Kaç gruptan sonra ölü satırların temizleneceği.
+ *
+ *  VACUUM (FULL değil) diski işletim sistemine geri vermiyor ama tablonun
+ *  içindeki yeri yeniden kullanılabilir kılıyor — tazeleme turunda ihtiyaç
+ *  tam olarak bu. Otomatik vakum da bunu yapıyor, ama kendi zamanlamasıyla;
+ *  tur ondan hızlı ilerliyor. */
+const VACUUM_EVERY = 20;
 
 interface TmdbProvider {
   provider_id: number;
@@ -218,6 +231,7 @@ async function main(): Promise<void> {
 
   let batchIds: number[] = [];
   let batchLinks: Link[] = [];
+  let flushCount = 0;
 
   // Sabit büyüklükte bir işçi havuzu: `Promise.all` ile 20.202 isteği birden
   // açmak TMDB'yi de belleği de bozardı.
@@ -250,6 +264,10 @@ async function main(): Promise<void> {
         batchIds = [];
         batchLinks = [];
         await flush(ids, links);
+
+        if (++flushCount % VACUUM_EVERY === 0) {
+          await pool.query('VACUUM movie_providers');
+        }
 
         const elapsed = (Date.now() - startedAt) / 1000;
         const rate = totals.done / elapsed;

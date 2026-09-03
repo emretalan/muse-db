@@ -93,6 +93,15 @@ title's old rows before writing the new ones. One full pass is ~20.000 TMDB
 calls and takes about 13 minutes (eight concurrent requests). A monthly pass is
 enough — availability moves on contract boundaries, not daily.
 
+**Watch the disk.** This is the only job here that rewrites a large table
+rather than appending to it, so it leaves one dead row for every row it
+writes. The first full pass was run with 24 stored regions (348.638 rows) and
+filled the production volume; Postgres crashed and then could not restart,
+because replaying its own write-ahead log also needs free space. The region
+list is now the app's storefronts only, batches are smaller, and the script
+vacuums as it goes. Before running it, check that the volume has at least
+twice the table's size free.
+
 Interrupting it is safe: `movies.providers_synced_at` is written per batch, so
 the next run picks up where it stopped.
 

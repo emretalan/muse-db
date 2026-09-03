@@ -13,26 +13,31 @@
  */
 
 /**
- * Sağlayıcı verisi saklanan bölgeler.
+ * Sağlayıcı verisi saklanan bölgeler — uygulamanın App Store vitrinleri.
  *
- * Hepsi değil: TMDB başlık başına 131 bölge döndürüyor ve hepsini saklamak
- * satır sayısını beş katına çıkarırdı. Liste uygulamanın App Store
- * vitrinlerinden ve onların dil komşularından kuruldu — Almanca konuşan bir
- * kullanıcı Avusturya'da da olabilir.
+ * TMDB başlık başına 131 bölge döndürüyor ve tek bir çağrı hepsini taşıyor,
+ * yani bölge eklemenin TMDB tarafında bir maliyeti yok. Maliyet **diskte**,
+ * ve orada ucuz da değil.
  *
- * Büyümesi ucuz: yeni bir bölge eklemek satır sayısını ~%4 artırıyor ve
- * tazeleme turu zaten bütün bölgeleri aynı çağrıdan alıyor.
+ * İlk sürümde liste 24 bölgeydi: vitrinler artı dil komşuları (Almanca
+ * konuşan bir kullanıcı Avusturya'da da olabilir). Ölçüsü 348.638 satır
+ * çıktı ve tazeleme turu — her başlığın eski satırlarını silip yenisini
+ * yazıyor — üretim veritabanının 500 MB'lık diskini doldurdu. Postgres
+ * çöktü ve yeniden başlarken kendi kurtarma günlüğünü yazacak yer bulamadı.
+ *
+ * Liste bu yüzden vitrinlerin kendisiyle sınırlı. Komşular, disk büyüdüğünde
+ * geri eklenebilir; sıra o zaman ölçmekte.
  */
 export const STORED_REGIONS = [
-  'TR',                                // Türkçe
-  'US', 'GB', 'CA', 'IE', 'AU', 'NZ', 'IN', // İngilizce
-  'DE', 'AT', 'CH',                    // Almanca
-  'FR', 'BE',                          // Fransızca
-  'ES', 'MX', 'AR', 'CL', 'CO',        // İspanyolca
-  'IT',                                // İtalyanca
-  'JP',                                // Japonca
-  'BR', 'PT',                          // Portekizce
-  'TW', 'HK',                          // Çince
+  'TR',              // Türkçe
+  'US', 'GB',        // İngilizce
+  'DE',              // Almanca
+  'FR',              // Fransızca
+  'ES', 'MX',        // İspanyolca
+  'IT',              // İtalyanca
+  'JP',              // Japonca
+  'BR',              // Portekizce
+  'TW',              // Çince — TMDB'de anakara Çin için izleme verisi yok
 ] as const;
 
 export type StoredRegion = (typeof STORED_REGIONS)[number];
