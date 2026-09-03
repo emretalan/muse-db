@@ -26,7 +26,7 @@ export interface Movie {
   imdbId: string | null;
 
   /** 'movie' ya da 'tv'. Dizi satırlarında `runtime` ilk bölümün süresini,
-   *  `year` ilk yayın yılını taşıyor — söz ilk bölüm üzerine veriliyor. */
+   *  `year` ilk yayın yılını taşıyor. */
   mediaType: MediaType;
   numberOfSeasons: number | null;
   numberOfEpisodes: number | null;
@@ -37,7 +37,29 @@ export interface Movie {
   /** Dizinin son yayın yılı; hâlâ devam ediyorsa null. "2011–2019" gibi bir
    *  aralık göstermek için. */
   lastYear: number | null;
+
+  /** Sözün hangi birim üzerine verileceği. Filmde `null`.
+   *
+   *  `'series'` — dizinin **tamamı**. Bitmiş ve toplamı bir akşam-üstü
+   *  taahhüde sığan diziler; katalogda 5.617'nin 1.729'u böyle.
+   *  `'episode'` — yalnızca **ilk bölüm**. 194 bölümlük bir telenovelaya
+   *  "bitireceğim" dedirtmek söz değil yemin olurdu.
+   *
+   *  Kararın sunucuda olmasının sebebi: eşik bir uygulama sürümü beklemeden
+   *  ayarlanabilsin, ve kural tek yerde yaşasın. Uygulamanın `Movie` modelinde
+   *  `status` alanı zaten yok. */
+  pledgeKind: PledgeKind | null;
+
+  /** Dizinin kabaca toplam süresi (dakika). Filmde `null`.
+   *
+   *  **Tahmin.** `runtime` S01E01'in süresi ve uzun metraj pilotlar toplamı
+   *  şişiriyor — ölçüldü: *Vinyl*'in pilotu 113 dk, tipik bölümü 60. Ekranda
+   *  bu yüzden "≈" ile gösterilmeli. */
+  totalMinutes: number | null;
 }
+
+/** Sözün birimi — bkz. `Movie.pledgeKind`. */
+export type PledgeKind = 'episode' | 'series';
 
 export interface MovieRow {
   id: number;

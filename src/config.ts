@@ -43,6 +43,19 @@ export const config = {
     // "Söz ilk bölüm üzerinedir" kararı gereği dizi satırlarındaki `runtime`
     // ilk bölümün süresi, ve filtre onun üzerinde çalışıyor.
     minRuntimeTv: 10,
+    // Bir dizinin "bitirilebilir" sayılacağı toplam süre.
+    //
+    // Sözün birimi buradan çıkıyor: bitmiş ve toplamı bu eşiğin altında kalan
+    // bir diziye **tamamı** için söz verilir, geri kalanına yalnızca ilk
+    // bölümü için. 10 saat, uzun bir filmin üç katı — bir akşamda bitmez ama
+    // birkaç akşamda biter, yani hâlâ bir söz.
+    //
+    // Ölçüm (üretim, 5.617 dizi): bu eşik 1.918 diziyi (%34) "bitirilebilir"
+    // yapıyor. 6 saate indirilince 1.084'e düşüyor, yani eşik hassas bir
+    // yerde değil. Bölüm sayısı ya da süresi bilinmeyen dizi yok (0/5.617),
+    // o yüzden ölçüsüzlük dalı pratikte hiç işlemiyor — ama duruyor, çünkü
+    // kalem 13 tam olarak o boşluğu doldurmakla ilgili.
+    finishableMinutes: 600,
     // Bilinirlik kadranının durakları — görünür kataloğun oy dağılımından
     // ölçüldü. Filmde medyan 547 oy, %85'lik dilim 2.637; dizide 138 ve 696.
     // "Herkesin bildikleri" üst %15, "kimsenin bakmadıkları" alt üçte bir.

@@ -1,4 +1,4 @@
-import type { Movie, MovieRow } from '../types/index.js';
+import type { Movie, MovieRow, PledgeKind } from '../types/index.js';
 import { config } from '../config.js';
 
 /**
@@ -48,7 +48,34 @@ export function toMovie(
       ? `${config.tmdbStillBaseUrl}${row.first_episode_still_path}`
       : null,
     lastYear: yearOf(row.last_air_date),
+    pledgeKind: pledgeKindOf(row),
+    totalMinutes: totalMinutesOf(row),
   };
+}
+
+/** Dizinin kabaca toplam süresi. Bkz. `Movie.totalMinutes` — tahmin. */
+function totalMinutesOf(row: MovieRow): number | null {
+  if (row.media_type !== 'tv') return null;
+  if (!row.number_of_episodes || !row.runtime) return null;
+  return row.number_of_episodes * row.runtime;
+}
+
+/**
+ * Sözün birimi.
+ *
+ * İki koşul birden: dizi **bitmiş** olmalı ve toplamı eşiğin altında kalmalı.
+ * Bitmiş olması şart, çünkü devam eden bir diziye "bitireceğim" demek
+ * tutulabilir bir söz değil — daha yazılmamış bölümler var.
+ *
+ * Bilinmeyen bölüm sayısı ya da süre `'episode'`e düşüyor: elde ölçü yokken
+ * bir taahhüt istemek, olmayan bir sayıya güvenmek olurdu.
+ */
+function pledgeKindOf(row: MovieRow): PledgeKind | null {
+  if (row.media_type !== 'tv') return null;
+  const total = totalMinutesOf(row);
+  if (total === null) return 'episode';
+  const finished = row.status === 'Ended' || row.status === 'Canceled';
+  return finished && total <= config.selection.finishableMinutes ? 'series' : 'episode';
 }
 
 /** Bir tarih sütunundan yıl. pg `DATE` sütunlarını Date nesnesi olarak
