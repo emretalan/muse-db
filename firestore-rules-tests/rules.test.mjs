@@ -200,6 +200,80 @@ await check('tanınmayan alan yazılamıyor', async () => {
   await assertFails(setDoc(hist(db('me'), 'me', 'CCC000'), { ...record, secret: 1 }));
 });
 
+// ---------------------------------------------------------------------------
+// ARŞİV — bulut yedeği
+//
+// Bu bölüm sınama takımına sonradan eklendi ve eklenir eklenmez bir hata
+// buldu: `validDealData()` beyaz listesinde `reaction` yoktu, ama uygulama
+// her `syncDeal` çağrısında o anahtarı gönderiyor. Yani kalem 14'ten beri
+// arşivin bulut yedeği tümüyle reddediliyordu.
+//
+// Aynı sınıftan ikinci hataydı — birincisi `trackingEpoch` ile yaşanmıştı ve
+// `MainContainerView.backfillArchiveIfNeeded` onu anlatıyor. İkisinin de tek
+// sebebi var: `deals` için hiç sınama yoktu.
+console.log('\nARŞİV — sözün bulut yedeği');
+await env.clearFirestore();
+
+const dealRef = (d, uid, id) => doc(d, 'users', uid, 'deals', id);
+
+/** Uygulamanın `FirestoreService.syncDeal` ile yazdığı belgenin aynısı. */
+const deal = (extra = {}) => ({
+  movieTitle: 'Küçük Cadı Kiki',
+  movieYear: '1989',
+  moviePosterUrl: 'p.jpg',
+  dealDate: Timestamp.now(),
+  isFulfilled: false,
+  fulfilledDate: null,
+  movieId: 16859,
+  mediaType: 'tv',
+  reaction: null,
+  trackingEpoch: 1,
+  syncedAt: serverTimestamp(),
+  ...extra,
+});
+
+await check('uygulamanın gerçekten yazdığı belge kabul ediliyor', async () => {
+  await assertSucceeds(setDoc(dealRef(db('me'), 'me', 'd1'), deal()));
+});
+await check('cevaplanmış söz yazılabiliyor', async () => {
+  await assertSucceeds(setDoc(dealRef(db('me'), 'me', 'd2'), deal({ reaction: 'loved' })));
+});
+await check('başkasının arşivine yazılamıyor', async () => {
+  await assertFails(setDoc(dealRef(db('ali'), 'me', 'd3'), deal()));
+});
+await check('başkasının arşivi okunamıyor', async () => {
+  await assertFails(getDoc(dealRef(db('ali'), 'me', 'd1')));
+});
+await check('tanınmayan alan reddediliyor', async () => {
+  await assertFails(setDoc(dealRef(db('me'), 'me', 'd4'), deal({ secret: 1 })));
+});
+await check('yanlış tip reddediliyor', async () => {
+  await assertFails(setDoc(dealRef(db('me'), 'me', 'd5'), deal({ isFulfilled: 'evet' })));
+});
+
+// Dizi sözünün birimi — yeni alanlar
+await check('bölüm sözü yazılabiliyor', async () => {
+  await assertSucceeds(setDoc(dealRef(db('me'), 'me', 'd6'), deal({
+    pledgeKind: 'episode', startedAt: null, seriesOutcome: null, episodeTarget: null,
+  })));
+});
+await check('bitirme sözü ve ilerlemesi yazılabiliyor', async () => {
+  await assertSucceeds(setDoc(dealRef(db('me'), 'me', 'd7'), deal({
+    pledgeKind: 'series', startedAt: Timestamp.now(), episodeTarget: 6,
+  })));
+});
+await check('dizi sonucu yazılabiliyor', async () => {
+  await assertSucceeds(setDoc(dealRef(db('me'), 'me', 'd8'), deal({
+    pledgeKind: 'episode', seriesOutcome: 'dropped',
+  })));
+});
+await check('bölüm hedefi sayı olmak zorunda', async () => {
+  await assertFails(setDoc(dealRef(db('me'), 'me', 'd9'), deal({ episodeTarget: 'altı' })));
+});
+await check('başlama anı tarih olmak zorunda', async () => {
+  await assertFails(setDoc(dealRef(db('me'), 'me', 'd10'), deal({ startedAt: 'dün' })));
+});
+
 console.log(`\n${pass} geçti, ${fail} kaldı\n`);
 await env.cleanup();
 process.exit(fail === 0 ? 0 : 1);
