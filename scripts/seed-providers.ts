@@ -88,6 +88,18 @@ interface Link {
   kind: 'f' | 'a';
 }
 
+interface DictionaryEntry {
+  name: string;
+  logoPath: string | null;
+  /** Bu ad, kimliğin kendi kaydından mı geldi.
+   *
+   *  Takma kimlikler birleştirilirken ad da onlarla geliyordu: 2303
+   *  ("Paramount Plus Premium") 531'den önce görülünce, 531 numaralı servis
+   *  kataloğa o adla giriyordu ve ekranda "Paramount Plus Premium" yazıyordu.
+   *  Kanonik kayıt geldiğinde adı düzeltebilsin diye işaretleniyor. */
+  canonical: boolean;
+}
+
 /** Sözlük: kimlik -> ad ve logo. Aynı sağlayıcı binlerce başlıkta geçiyor,
  *  bu yüzden satır satır değil grup grup yazılıyor.
  *
@@ -97,7 +109,7 @@ interface Link {
  *  sözlüğe yeni bir sağlayıcı ekleyebiliyor; temizleme onu da siliyor, ama
  *  işçinin yazdığı bağlantı satırı bir sonraki grupta duruyordu. Sözlük
  *  yüzlerce satır, her grupta yeniden yazmanın maliyeti ölçülemez. */
-const dictionary = new Map<number, { name: string; logoPath: string | null }>();
+const dictionary = new Map<number, DictionaryEntry>();
 
 async function fetchProviders(target: Target): Promise<Record<string, TmdbRegion>> {
   const url =
@@ -140,10 +152,14 @@ function extractLinks(movieId: number, results: Record<string, TmdbRegion>): Lin
         if (seen.has(id)) continue;
         seen.set(id, { movieId, region, providerId: id, kind });
 
-        if (!dictionary.has(id)) {
+        // Kanonik kayıt, takma kimlikten gelen adı her zaman eziyor.
+        const canonical = provider.provider_id === id;
+        const existing = dictionary.get(id);
+        if (!existing || (canonical && !existing.canonical)) {
           dictionary.set(id, {
             name: provider.provider_name,
             logoPath: provider.logo_path ?? null,
+            canonical,
           });
         }
       }

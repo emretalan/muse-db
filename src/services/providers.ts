@@ -101,6 +101,14 @@ export function canonicalProviderId(id: number): number {
 const EXCLUDED_IDS = new Set([
   2285, // JustWatch TV — toplayıcı, abonelik değil
   2284, // HBO Max on U-Next — U-NEXT içinden satılan paket, ayrı bir servis değil
+  // Kütüphane servisleri. TMDB bunları `flatrate` sayıyor ve teknik olarak
+  // haklı — ama abonelik değil, halk kütüphanesi ya da üniversite üyeliği
+  // gerektiriyorlar. Kataloğumuzun ABD'deki en geniş iki koleksiyonu onlarda
+  // (Kanopy 2.489, Hoopla 2.044) ve listeyi başlık sayısına göre
+  // sıraladığımız için Netflix'i dördüncü sıraya itiyorlardı. Bu bir
+  // yargı kararı: kutu "neyin var" diye soruyor ve çoğu kişide bunlar yok.
+  191, // Kanopy
+  212, // Hoopla
 ]);
 const EXCLUDED_NAME = /(Amazon Channel|Apple TV Channel|Roku Premium Channel|Channel$)/i;
 
