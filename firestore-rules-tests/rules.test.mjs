@@ -393,6 +393,31 @@ await check('yarım kalmış belge tamamlanarak güncellenebiliyor', async () =>
   }, { merge: true }));
 });
 
+// `FirestoreService.updateDisplayName` → `mergeUserData`. Kullanıcının
+// seçtiği ad `displayName` alanında saklanıyor; alan beyaz listede zaten
+// vardı, yani bu özellik için kural dağıtımı gerekmedi. Sınama o varsayımı
+// tutuyor: biri listeyi daraltırsa burada kırılır.
+await check('kullanıcı adı yazılabiliyor', async () => {
+  await seedUser('u12');
+  await assertSucceeds(setDoc(userRef(db('u12'), 'u12'), {
+    displayName: 'Emre', lastActiveAt: serverTimestamp(),
+  }, { merge: true }));
+});
+
+await check('kullanıcı adı belge yokken de eksiksiz yazılıyor', async () => {
+  await assertSucceeds(setDoc(userRef(db('u13'), 'u13'), {
+    displayName: 'Emre', lastActiveAt: serverTimestamp(),
+    createdAt: serverTimestamp(), totalPicks: 0, isPremium: false, isAnonymous: true,
+  }, { merge: true }));
+});
+
+await check('kullanıcı adı metin olmak zorunda', async () => {
+  await seedUser('u14');
+  await assertFails(setDoc(userRef(db('u14'), 'u14'), {
+    displayName: 42, lastActiveAt: serverTimestamp(),
+  }, { merge: true }));
+});
+
 await check('bilinmeyen alan reddediliyor', async () => {
   await assertFails(setDoc(userRef(db('u8'), 'u8'), fullProfile({ nickname: 'x' })));
 });
