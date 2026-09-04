@@ -316,15 +316,19 @@ await check('geri alma başkasının arşivinde çalışmıyor', async () => {
     { reaction: deleteField(), syncedAt: serverTimestamp() }, { merge: true }));
 });
 
-// Bu sınama bir *boşluğu* kayda geçiriyor, bir kuralı değil.
+// Bu sınama kuralın *doğru* davranışını sabitliyor, ve uygulamanın yedek
+// yolunun neden var olduğunu anlatıyor.
 //
 // Parça yazmalar `merge: true` kullanıyor, yani belge yoksa onu **yaratmaya**
 // çalışıyorlar; kural da birleşmiş belgede `movieTitle`, `dealDate` gibi
-// alanları arıyor ve iki alanlık bir yazma bunları taşımıyor. Sonuç:
-// `syncDeal` bir kez başarısız olmuş bir söz için tepki de cevap da hiçbir
-// zaman buluta ulaşamıyor. `backfillArchiveIfNeeded` tek seferlik olduğu için
-// kendi kendine de düzelmiyor.
-await check('olmayan bir söze parça yazma reddediliyor (bilinen boşluk)', async () => {
+// alanları arıyor ve iki alanlık bir yazma bunları taşımıyor. Reddedilmesi
+// doğru: eksik bir söz belgesi yaratılmamalı.
+//
+// Uygulama tarafında bu bir zamanlar sessiz bir kayıptı — `syncDeal`i bir kez
+// ıskalamış bir söz için tepki de cevap da hiçbir zaman buluta ulaşmıyordu.
+// Artık `SessionManager.syncDealPart` reddi yakalayıp belgenin tamamını
+// yazıyor. Yani bu sınama bozulursa yedek yolun tetikleyicisi de kaybolur.
+await check('olmayan bir söze parça yazma reddediliyor', async () => {
   await assertFails(setDoc(dealRef(db('me'), 'me', 'hicYok'),
     { reaction: 'loved', syncedAt: serverTimestamp() }, { merge: true }));
 });
