@@ -291,6 +291,44 @@ await check('sezon slug\'ı metin olmak zorunda', async () => {
   await assertFails(setDoc(dealRef(db('me'), 'me', 'd12'), deal({ seasonSlug: 7 })));
 });
 
+// Cevabı geri almak — `updateDealReaction` / `updateDealOutcome`
+//
+// İkisi de belgenin tamamını değil iki alanı yazıyor ve geri alma `nil` ile
+// ifade ediliyor: alan siliniyor. Kural `hasOnly`'yi **birleşmiş** belge
+// üzerinde değerlendirdiği için silmenin geçtiğini görmek yetmez — alanın
+// gerçekten kalmadığını da okumak gerekiyor.
+await check('tepki geri alınınca alan siliniyor', async () => {
+  const r = dealRef(db('me'), 'me', 'd1');
+  await assertSucceeds(setDoc(r, { reaction: 'loved', syncedAt: serverTimestamp() }, { merge: true }));
+  await assertSucceeds(setDoc(r, { reaction: deleteField(), syncedAt: serverTimestamp() }, { merge: true }));
+  const snap = await getDoc(r);
+  if ('reaction' in snap.data()) throw new Error('reaction alanı hâlâ duruyor');
+});
+await check('dizi cevabı geri alınınca alan siliniyor', async () => {
+  const r = dealRef(db('me'), 'me', 'd8');
+  await assertSucceeds(setDoc(r, { seriesOutcome: 'dropped', syncedAt: serverTimestamp() }, { merge: true }));
+  await assertSucceeds(setDoc(r, { seriesOutcome: deleteField(), syncedAt: serverTimestamp() }, { merge: true }));
+  const snap = await getDoc(r);
+  if ('seriesOutcome' in snap.data()) throw new Error('seriesOutcome alanı hâlâ duruyor');
+});
+await check('geri alma başkasının arşivinde çalışmıyor', async () => {
+  await assertFails(setDoc(dealRef(db('ali'), 'me', 'd1'),
+    { reaction: deleteField(), syncedAt: serverTimestamp() }, { merge: true }));
+});
+
+// Bu sınama bir *boşluğu* kayda geçiriyor, bir kuralı değil.
+//
+// Parça yazmalar `merge: true` kullanıyor, yani belge yoksa onu **yaratmaya**
+// çalışıyorlar; kural da birleşmiş belgede `movieTitle`, `dealDate` gibi
+// alanları arıyor ve iki alanlık bir yazma bunları taşımıyor. Sonuç:
+// `syncDeal` bir kez başarısız olmuş bir söz için tepki de cevap da hiçbir
+// zaman buluta ulaşamıyor. `backfillArchiveIfNeeded` tek seferlik olduğu için
+// kendi kendine de düzelmiyor.
+await check('olmayan bir söze parça yazma reddediliyor (bilinen boşluk)', async () => {
+  await assertFails(setDoc(dealRef(db('me'), 'me', 'hicYok'),
+    { reaction: 'loved', syncedAt: serverTimestamp() }, { merge: true }));
+});
+
 
 // ---------------------------------------------------------------------------
 // KULLANICI BELGESİ
