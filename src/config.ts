@@ -71,6 +71,24 @@ export const config = {
     firstPickTopPercentile: 0.3,
   },
 
+  seasons: {
+    /**
+     * Sezon kartındaki "bu ay N kişi yola çıktı" satırı bu sayının altında
+     * hiç gösterilmiyor.
+     *
+     * Eşiğin sebebi ölçüm: bugün `user_picks`te toplam 40 seçim ve 37 kişi
+     * var, bu ay 15 kişi. Bir sezona düşen pay 3-5 kişi olurdu ve "3 kişi
+     * yola çıktı" hiç göstermemekten kötü — davet etmesi gereken bir satırın
+     * boş bir salonu göstermesi.
+     *
+     * Buradan ayarlanabilmesi bilinçli, `finishableMinutes` ile aynı
+     * gerekçeyle: sayı gerçekleştiğinde satırı açmak bir App Store sürümü
+     * beklememeli. Uygulamada ayrıca bir eşik **yok** — sunucu eşiği
+     * geçmeyen sezona alanı hiç koymuyor, istemci de olmayanı çizmiyor.
+     */
+    minStartersToShow: 100,
+  },
+
   // TMDB image base URLs
   tmdbImageBaseUrl: 'https://image.tmdb.org/t/p/w500',
   // Oyuncu portreleri detay ekranında ~64 pt genişliğinde yan yana duruyor;

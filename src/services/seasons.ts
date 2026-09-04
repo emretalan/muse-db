@@ -196,6 +196,19 @@ export interface ResolvedSeason {
   target: number;
   /** Bu sezonda kaç başlık var. Sıfırsa sezon hiç gönderilmiyor. */
   poolSize: number;
+  /**
+   * Bu ay kaç kişi bu sezonun ritüelini başlattı.
+   *
+   * Eşiğin (`config.seasons.minStartersToShow`) altındaysa alan **hiç
+   * gönderilmiyor** — istemcide ikinci bir eşik olmasın diye. Bir satırın
+   * görünüp görünmeyeceği tek yerden, sunucudan ayarlanıyor.
+   *
+   * "Tamamladı" değil "başladı": tamamlama sinyali sunucuya hiç ulaşmıyor
+   * (`isFulfilled` cihazda ve Firestore'da kalıyor). Ve bu daha doğru çerçeve
+   * — yola çıkanların sayısı davet ediyor, tamamlayanlarınki kıyaslamaya
+   * çağırıyor.
+   */
+  starters?: number;
 }
 
 /**

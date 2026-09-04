@@ -1,7 +1,31 @@
 import type { FastifyInstance } from 'fastify';
-import { countCandidateMovies } from '../db/queries.js';
+import { countCandidateMovies, countSeasonStarters } from '../db/queries.js';
 import { normalizeLanguage } from '../services/languages.js';
 import { localize, seasonsForMonth, type ResolvedSeason } from '../services/seasons.js';
+import { config } from '../config.js';
+
+/**
+ * Katılım sayısının önbelleği — anahtar "slug:yıl-ay".
+ *
+ * `/seasons` zaten sezon başına bir `COUNT(DISTINCT m.id)` çekiyor (havuz
+ * boyu); ikinci bir sayımı her isteğe eklemek istemiyoruz. Sayı saatlik
+ * değişen bir şey değil ve istemci zaten günde bir soruyor, ama bir kullanıcı
+ * uygulamayı gün içinde birden çok kez açtığında ya da dilini değiştirdiğinde
+ * istek tekrarlanıyor. Desen sunucunun geri kalanıyla aynı (`providers.ts`,
+ * `synopsis.ts`, `trailer.ts`).
+ */
+const startersCache = new Map<string, { count: number; cachedAt: number }>();
+const STARTERS_TTL_MS = 60 * 60 * 1000; // 1 saat
+
+async function startersFor(slug: string, year: number, month: number): Promise<number> {
+  const key = `${slug}:${year}-${month}`;
+  const hit = startersCache.get(key);
+  if (hit && Date.now() - hit.cachedAt < STARTERS_TTL_MS) return hit.count;
+
+  const count = await countSeasonStarters(slug, year, month);
+  startersCache.set(key, { count, cachedAt: Date.now() });
+  return count;
+}
 
 interface SeasonsQuery {
   lang?: string;
@@ -21,6 +45,12 @@ export async function seasonRoutes(fastify: FastifyInstance): Promise<void> {
         ? parsed
         : new Date().getUTCMonth() + 1;
 
+      // Yıl istemciden gelmiyor; sayım penceresi için gerekiyor. Aralık
+      // sezonu ocakta da geçerli (`months: [12, 1]`) ve o durumda istemcinin
+      // ayı 1 iken sunucunun yılı zaten doğru olanı — sayaç her ay kendi
+      // penceresine bakıyor, aralıkta verilenler ocağınkine karışmıyor.
+      const year = new Date().getUTCFullYear();
+
       const active = seasonsForMonth(now);
       const resolved = await Promise.all(
         active.map(async (season) => {
@@ -29,6 +59,12 @@ export async function seasonRoutes(fastify: FastifyInstance): Promise<void> {
           // dokunuyor, tören sonuçsuz kalıyor. Katalog büyürken bir sezonun
           // sayısı da değişiyor, o yüzden sabit yazılamaz.
           const poolSize = await countCandidateMovies(season.filters, []);
+
+          // Eşiğin altındaki sayı gönderilmiyor: "3 kişi yola çıktı",
+          // davet etmesi gereken bir satırın boş salonu göstermesi olurdu.
+          const starters = await startersFor(season.slug, year, now);
+          const worthShowing = starters >= config.seasons.minStartersToShow;
+
           return {
             slug: season.slug,
             title,
@@ -37,6 +73,7 @@ export async function seasonRoutes(fastify: FastifyInstance): Promise<void> {
             filters: season.filters,
             target: season.target,
             poolSize,
+            ...(worthShowing ? { starters } : {}),
           };
         })
       );

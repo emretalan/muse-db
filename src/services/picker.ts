@@ -75,7 +75,9 @@ export async function pickMovie(
   language: string | null = null,
   /** Zevk vektörü; verilmezse kader bugüne kadarki gibi yalnızca kalite ve
    *  bilinirliğe bakıyor. */
-  taste: TasteVector | null = null
+  taste: TasteVector | null = null,
+  /** Yalnızca kayda geçiyor; seçimi etkilemiyor. */
+  seasonSlug: string | null = null
 ): Promise<Movie | null> {
   // Step 1: Get recently picked movie IDs to exclude
   const recentPickIds = await getRecentPickMovieIds(sessionId);
@@ -127,7 +129,7 @@ export async function pickMovie(
   }
 
   // Step 7: Record the pick
-  await recordPick(sessionId, selected.movie.id, filters);
+  await recordPick(sessionId, selected.movie.id, filters, seasonSlug);
 
   // Step 8: Return the movie
   const keywords = await getMovieKeywords(selected.movie.id);

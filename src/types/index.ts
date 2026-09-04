@@ -195,6 +195,12 @@ export interface PickRequest {
    *  şeyi elemiyor. Aynı sebeple gönderilmemesi tamamen geçerli bir durum ve
    *  yayındaki her sürümün gördüğü davranış bu. */
   taste?: unknown;
+  /** Tören bir tematik sezonun kapısından başladıysa o sezonun slug'ı.
+   *
+   *  Yalnızca sayım için: `user_picks`e yazılıyor ve sezon kartındaki
+   *  "bu ay N kişi yola çıktı" satırı buradan çıkıyor. Kaderin seçimini
+   *  hiç etkilemiyor — sezonun etkisi zaten `filters` içinde. */
+  seasonSlug?: string;
 }
 
 export interface PickResponse {

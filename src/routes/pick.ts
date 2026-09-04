@@ -15,7 +15,7 @@ export async function pickRoutes(fastify: FastifyInstance): Promise<void> {
         });
       }
 
-      const { sessionId, filters, excludeMovieIds, lang, taste } = body as PickRequest;
+      const { sessionId, filters, excludeMovieIds, lang, taste, seasonSlug } = body as PickRequest;
       const language = normalizeLanguage(lang);
       const safeFilters = filters || {};
       const safeExcludeIds = Array.isArray(excludeMovieIds)
@@ -58,7 +58,13 @@ export async function pickRoutes(fastify: FastifyInstance): Promise<void> {
           safeFilters,
           safeExcludeIds,
           language,
-          sanitizeVector(taste)
+          sanitizeVector(taste),
+          // Slug yalnızca kayda geçiyor. Uydurulmuş bir değer kaderi
+          // etkilemiyor; en fazla kendi sezonunun sayacını şişirir, o yüzden
+          // biçim denetimi (uzunluk + karakter) yeterli.
+          typeof seasonSlug === 'string' && /^[a-z0-9-]{1,40}$/.test(seasonSlug)
+            ? seasonSlug
+            : null
         );
 
         if (!movie) {

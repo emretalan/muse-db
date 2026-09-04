@@ -1049,13 +1049,42 @@ export async function isFirstPickForSession(sessionId: string): Promise<boolean>
 export async function recordPick(
   sessionId: string,
   movieId: number,
-  filters: PickFilters
+  filters: PickFilters,
+  /** Seçim bir tematik sezonun ritüelinden geldiyse o sezonun slug'ı. */
+  seasonSlug: string | null = null
 ): Promise<void> {
   await pool.query(
-    `INSERT INTO user_picks (session_id, movie_id, filters, created_at)
-     VALUES ($1, $2, $3, NOW())`,
-    [sessionId, movieId, JSON.stringify(filters)]
+    `INSERT INTO user_picks (session_id, movie_id, filters, season_slug, created_at)
+     VALUES ($1, $2, $3, $4, NOW())`,
+    [sessionId, movieId, JSON.stringify(filters), seasonSlug]
   );
+}
+
+/**
+ * Bu ay kaç **kişi** o sezonun ritüelini başlattı.
+ *
+ * Satır değil kişi sayılıyor (`DISTINCT session_id`): aynı kişinin sezon
+ * boyunca altı seçim yapması onu altı kişi yapmaz, ve kartta yazan cümle
+ * "N kişi yola çıktı".
+ *
+ * Ay sunucunun değil **istemcinin** ayı üzerinden geliyor, `/seasons`in geri
+ * kalanıyla aynı gerekçeyle: 1 ekim sabahı Auckland'da yeni sezon başlamışken
+ * sunucu hâlâ eylülde olabilir.
+ */
+export async function countSeasonStarters(
+  seasonSlug: string,
+  year: number,
+  month: number
+): Promise<number> {
+  const result = await pool.query<{ count: string }>(
+    `SELECT count(DISTINCT session_id) AS count
+       FROM user_picks
+      WHERE season_slug = $1
+        AND created_at >= make_date($2, $3, 1)
+        AND created_at <  make_date($2, $3, 1) + INTERVAL '1 month'`,
+    [seasonSlug, year, month]
+  );
+  return parseInt(result.rows[0].count, 10);
 }
 
 // Health check - verify database connection
