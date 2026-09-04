@@ -217,6 +217,12 @@ await env.clearFirestore();
 const dealRef = (d, uid, id) => doc(d, 'users', uid, 'deals', id);
 
 /** Uygulamanın `FirestoreService.syncDeal` ile yazdığı belgenin aynısı. */
+// `FirestoreService.syncDeal`in gönderdiği haritanın birebir kopyası —
+// **bütün anahtarlarıyla**. Değeri nil olan alanlar da haritada duruyor
+// (`deal.pledgeKind as Any` NSNull'a köprüleniyor ve Firestore null bir alan
+// yazıyor), ve `hasOnly` fazladan tek bir anahtarda bütün yazmayı reddediyor.
+// Yardımcıyı eksik tutmak bu sınamayı işe yaramaz yapar: kaçırdığı anahtar
+// tam da beyaz listeye eklenmesi unutulan anahtar olurdu.
 const deal = (extra = {}) => ({
   movieTitle: 'Küçük Cadı Kiki',
   movieYear: '1989',
@@ -227,6 +233,11 @@ const deal = (extra = {}) => ({
   movieId: 16859,
   mediaType: 'tv',
   reaction: null,
+  pledgeKind: null,
+  startedAt: null,
+  seriesOutcome: null,
+  episodeTarget: null,
+  seasonSlug: null,
   trackingEpoch: 1,
   syncedAt: serverTimestamp(),
   ...extra,
@@ -272,6 +283,12 @@ await check('bölüm hedefi sayı olmak zorunda', async () => {
 });
 await check('başlama anı tarih olmak zorunda', async () => {
   await assertFails(setDoc(dealRef(db('me'), 'me', 'd10'), deal({ startedAt: 'dün' })));
+});
+await check('sezon slug\'ı yazılabiliyor', async () => {
+  await assertSucceeds(setDoc(dealRef(db('me'), 'me', 'd11'), deal({ seasonSlug: 'world-tour' })));
+});
+await check('sezon slug\'ı metin olmak zorunda', async () => {
+  await assertFails(setDoc(dealRef(db('me'), 'me', 'd12'), deal({ seasonSlug: 7 })));
 });
 
 
