@@ -3,7 +3,7 @@ import {
   initializeTestEnvironment, assertFails, assertSucceeds,
 } from '@firebase/rules-unit-testing';
 import {
-  doc, getDoc, setDoc, updateDoc, deleteField, serverTimestamp, Timestamp,
+  doc, getDoc, setDoc, updateDoc, deleteField, serverTimestamp, Timestamp, increment,
 } from 'firebase/firestore';
 
 // Kurallar uygulama deposunda yaşıyor (`firebase.json` ve dağıtım orada), ama
@@ -273,6 +273,163 @@ await check('bölüm hedefi sayı olmak zorunda', async () => {
 await check('başlama anı tarih olmak zorunda', async () => {
   await assertFails(setDoc(dealRef(db('me'), 'me', 'd10'), deal({ startedAt: 'dün' })));
 });
+
+
+// ---------------------------------------------------------------------------
+// KULLANICI BELGESİ
+//
+// `deals` için sınama olmaması, beyaz listeyi uygulamanın gerisinde bırakmış ve
+// bulut yedeğini haftalarca sessizce kırmıştı. `users` ve `pactHistory` aynı
+// boşlukta duruyordu. Aşağıdaki yazmalar `FirestoreService`'in **gerçekten**
+// gönderdiği haritaların kopyası — alan listesini tahmin eden bir sınama aynı
+// hatayı bir kez daha kaçırırdı.
+// ---------------------------------------------------------------------------
+const userRef = (d, uid) => doc(d, 'users', uid);
+
+/** `ensureUserProfile`, belge yokken. */
+const fullProfile = (extra = {}) => ({
+  createdAt: serverTimestamp(),
+  lastActiveAt: serverTimestamp(),
+  trackingEpoch: 1,
+  trackingStartedAt: serverTimestamp(),
+  totalPicks: 0,
+  isPremium: false,
+  isAnonymous: true,
+  ...extra,
+});
+
+async function seedUser(uid, data = fullProfile()) {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), 'users', uid), data);
+  });
+}
+
+console.log('\nKULLANICI BELGESİ');
+
+await check('yeni profil oluşturulabiliyor (ensureUserProfile)', async () => {
+  await assertSucceeds(setDoc(userRef(db('u1'), 'u1'), fullProfile()));
+});
+
+await check('başkasının profiline yazılamıyor', async () => {
+  await assertFails(setDoc(userRef(db('u1'), 'u2'), fullProfile()));
+});
+
+await check('var olan profilde etkinlik damgası tazelenebiliyor', async () => {
+  await seedUser('u3');
+  await assertSucceeds(setDoc(userRef(db('u3'), 'u3'), {
+    lastActiveAt: serverTimestamp(), isAnonymous: true,
+  }, { merge: true }));
+});
+
+await check('premium durumu güncellenebiliyor', async () => {
+  await seedUser('u4');
+  await assertSucceeds(setDoc(userRef(db('u4'), 'u4'), {
+    isPremium: true, lastActiveAt: serverTimestamp(),
+  }, { merge: true }));
+});
+
+await check('seçim sayacı artırılabiliyor', async () => {
+  await seedUser('u5');
+  await assertSucceeds(setDoc(userRef(db('u5'), 'u5'), {
+    totalPicks: increment(1), lastActiveAt: serverTimestamp(), trackingEpoch: 1,
+  }, { merge: true }));
+});
+
+await check('Apple ile giriş, profili olan kullanıcıda geçiyor', async () => {
+  await seedUser('u6');
+  await assertSucceeds(setDoc(userRef(db('u6'), 'u6'), {
+    lastActiveAt: serverTimestamp(), isAnonymous: false, trackingEpoch: 1,
+    email: 'a@b.c', displayName: 'Ada',
+  }, { merge: true }));
+});
+
+// `validUserData()` beş alanı koşulsuz istiyor ve kural güncellemede yazma
+// **sonrası** belgeye bakıyor. Belge henüz yokken eksik bir profil göndermek
+// bu yüzden reddediliyor — ve reddedilmesi doğru. `createOrUpdateUserProfile`
+// eskiden tam olarak bunu gönderiyordu; Apple ile ilk girişte kimlik
+// dinleyicisiyle yarışı kaybettiğinde profil sessizce yazılamıyor, e-posta ve
+// ad kayboluyordu. Kural değil uygulama düzeltildi; aşağıdaki iki sınama o
+// kararı birlikte tutuyor.
+await check('belge yokken eksik profil reddediliyor', async () => {
+  await assertFails(setDoc(userRef(db('u7'), 'u7'), {
+    lastActiveAt: serverTimestamp(), isAnonymous: false, trackingEpoch: 1,
+    email: 'a@b.c', displayName: 'Ada',
+  }, { merge: true }));
+});
+
+await check('Apple ile giriş, profili olmayan kullanıcıda eksiksiz yazıyor', async () => {
+  await assertSucceeds(setDoc(userRef(db('u10'), 'u10'), {
+    lastActiveAt: serverTimestamp(), isAnonymous: false, trackingEpoch: 1,
+    email: 'a@b.c', displayName: 'Ada',
+    createdAt: serverTimestamp(), totalPicks: 0, isPremium: false,
+    trackingStartedAt: serverTimestamp(),
+  }, { merge: true }));
+});
+
+// `ensureUserProfile`in güncelleme dalı da yarım belgeyi tamamlıyor: eksik
+// bırakırsa kendi yazması da reddedilir ve profil bir daha hiç düzelmez.
+await check('yarım kalmış belge tamamlanarak güncellenebiliyor', async () => {
+  await seedUser('u11', { lastActiveAt: serverTimestamp(), isAnonymous: true });
+  await assertSucceeds(setDoc(userRef(db('u11'), 'u11'), {
+    lastActiveAt: serverTimestamp(), isAnonymous: true,
+    createdAt: serverTimestamp(), totalPicks: 0, isPremium: false,
+  }, { merge: true }));
+});
+
+await check('bilinmeyen alan reddediliyor', async () => {
+  await assertFails(setDoc(userRef(db('u8'), 'u8'), fullProfile({ nickname: 'x' })));
+});
+
+await check('totalPicks metin olamaz', async () => {
+  await assertFails(setDoc(userRef(db('u9'), 'u9'), fullProfile({ totalPicks: 'üç' })));
+});
+
+// ---------------------------------------------------------------------------
+// SÖZ GEÇMİŞİ — kişisel kopya
+// ---------------------------------------------------------------------------
+const histRef = (d, uid, code) => doc(d, 'users', uid, 'pactHistory', code);
+
+/** `PactHistoryService.record`in gönderdiği haritanın kopyası. */
+const historyRecord = (extra = {}) => ({
+  code: 'ABC123',
+  sealedAt: Timestamp.now(),
+  movieId: 16859,
+  movieTitle: 'Küçük Cadı Kiki',
+  moviePosterUrl: 'p.jpg',
+  mediaType: 'movie',
+  others: [{ uid: 'friend', name: 'Ada' }],
+  ...extra,
+});
+
+console.log('\nSÖZ GEÇMİŞİ — kişisel kopya');
+
+await check('kendi ağacına yazılabiliyor', async () => {
+  await assertSucceeds(setDoc(histRef(db('me'), 'me', 'ABC123'), historyRecord()));
+});
+
+await check('adı olmayan katılımcı da yazılabiliyor', async () => {
+  await assertSucceeds(setDoc(histRef(db('me'), 'me', 'ABC124'), historyRecord({
+    others: [{ uid: 'friend' }],
+  })));
+});
+
+await check('mediaType olmadan da yazılabiliyor', async () => {
+  const r = historyRecord(); delete r.mediaType;
+  await assertSucceeds(setDoc(histRef(db('me'), 'me', 'ABC125'), r));
+});
+
+await check('başkasının ağacına yazılamıyor', async () => {
+  await assertFails(setDoc(histRef(db('me'), 'other', 'ABC126'), historyRecord()));
+});
+
+await check('boş katılımcı listesi reddediliyor', async () => {
+  await assertFails(setDoc(histRef(db('me'), 'me', 'ABC127'), historyRecord({ others: [] })));
+});
+
+await check('bilinmeyen alan reddediliyor', async () => {
+  await assertFails(setDoc(histRef(db('me'), 'me', 'ABC128'), historyRecord({ note: 'x' })));
+});
+
 
 console.log(`\n${pass} geçti, ${fail} kaldı\n`);
 await env.cleanup();
