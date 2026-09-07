@@ -86,6 +86,7 @@ function buildCandidateQuery(
     skipMoods?: boolean;
     skipAge?: boolean;
     skipPopularity?: boolean;
+    skipCommitment?: boolean;
     skipNetworks?: boolean;
     skipProviders?: boolean;
   } = {}
@@ -104,6 +105,7 @@ function buildCandidateQuery(
     famousVotesTv,
     hiddenVotes,
     hiddenVotesTv,
+    finishableMinutes,
   } = config.selection;
 
   // Belirtilmemişse film. Yayındaki istemciler bu alanı göndermiyor ve
@@ -246,6 +248,27 @@ function buildCandidateQuery(
     } else if (filters.popularity === 'hidden') {
       conditions.push(`m.vote_count < ${isTv ? hiddenVotesTv : hiddenVotes}`);
     }
+  }
+
+  // Sözün büyüklüğü. `serialize.ts`'deki `pledgeKindOf` ile **aynı** iki
+  // koşul, aynı sabitten: dizi bitmiş olmalı ve toplamı eşiğin altında
+  // kalmalı. Devam eden bir diziye "bitireceğim" demek tutulabilir bir söz
+  // değil — daha yazılmamış bölümler var.
+  //
+  // `::int` şart. İki sütun da SMALLINT ve Postgres `int2 * int2` çarpımını
+  // yine int2'de yapıyor; katalogdaki uzun soluklu diziler (binin üzerinde
+  // bölüm) 32.767'yi aşıp sorguyu "smallint out of range" ile düşürüyor.
+  // `serialize.ts`'deki aynı çarpım JavaScript'te olduğu için bu tuzağı
+  // hiç görmüyor.
+  //
+  // Film satırlarında hiç uygulanmıyor: `number_of_episodes` orada boş ve
+  // koşul bütün filmleri elerdi.
+  if (filters.commitment === 'finishable' && isTv && !options.skipCommitment) {
+    conditions.push(
+      `m.status IN ('Ended', 'Canceled')
+       AND m.number_of_episodes IS NOT NULL
+       AND m.number_of_episodes::int * m.runtime <= ${finishableMinutes}`
+    );
   }
 
   // Yayıncı. Kova slug'ı kanal adlarına açılıyor; tanınmayan slug düşüyor.
@@ -582,6 +605,22 @@ export async function countRefinementFacets(
     );
   };
 
+  // Sözün büyüklüğü — yayıncı gibi yalnız dizide sorulan bir soru.
+  const commitmentQuery = () => {
+    const { fromAndWhere, params } = buildCandidateQuery(filters, excludeMovieIds, {
+      skipCommitment: true,
+    });
+    return pool.query<Record<string, string>>(
+      `SELECT COUNT(DISTINCT m.id) FILTER (
+                WHERE m.status IN ('Ended', 'Canceled')
+                  AND m.number_of_episodes IS NOT NULL
+                  AND m.number_of_episodes::int * m.runtime <= ${config.selection.finishableMinutes}
+              ) AS finishable
+         ${fromAndWhere}`,
+      params
+    );
+  };
+
   // Yayıncı yalnız dizide anlamlı — film satırlarında `networks` her zaman
   // boş, ve sekiz kutu için sekiz sıfır saymanın maliyeti var.
   // Sağlayıcı sayımı: taban sorgu kendi filtresi olmadan kuruluyor, sonra
@@ -614,7 +653,14 @@ export async function countRefinementFacets(
   const [singleRowResults, providerResult] = await Promise.all([
     Promise.all(
       isTv
-        ? [moodQuery(), ageQuery(), popularityQuery(), networkQuery(), totalQuery()]
+        ? [
+            moodQuery(),
+            ageQuery(),
+            popularityQuery(),
+            commitmentQuery(),
+            networkQuery(),
+            totalQuery(),
+          ]
         : [moodQuery(), ageQuery(), popularityQuery(), totalQuery()]
     ),
     providerQuery(),

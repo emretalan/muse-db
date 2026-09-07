@@ -166,6 +166,18 @@ export interface PickFilters {
    *  iki ayrı soru. */
   networks?: string[] | string;
 
+  /** Sözün büyüklüğü. `finishable` yalnız **bitmiş** ve toplamı
+   *  `config.selection.finishableMinutes` altında kalan dizileri getiriyor —
+   *  yani `pledgeKind` alanının `'series'` döndürdüğü satırların tamamı.
+   *
+   *  Aynı hesap iki yerde duruyor gibi görünüyor ama duramaz: biri sorguyu
+   *  kuruyor (SQL), diğeri yanıtı etiketliyor (`serialize.ts`). İkisinin de
+   *  aynı sabitten beslenmesi şart, yoksa filtre "bitirebileceğin" der ve
+   *  gelen kart "ilk bölüm" rozeti taşır.
+   *
+   *  Yalnız dizide anlamlı: film satırlarında `number_of_episodes` boş. */
+  commitment?: Commitment;
+
   /** TMDB sağlayıcı kimlikleri. Birden fazlası VEYA ile birleşiyor —
    *  "Netflix'im ya da Disney+'ım var" demek. */
   providers?: number[] | number;
@@ -176,6 +188,10 @@ export interface PickFilters {
    *  sağlayıcı filtresi kullanıcıların çoğuna yalan söylerdi. */
   region?: string;
 }
+
+/** Sözün büyüklüğü. Tek durak: kapalı hâli zaten "fark etmez" ve "bana uzun
+ *  bir dizi ver" diye soran kimse yok — uzun dizi zaten varsayılan. */
+export type Commitment = 'finishable';
 
 /** Bilinirlik kadranının durakları. Ortada durak yok: filtrenin kapalı hâli
  *  zaten "fark etmez". */
