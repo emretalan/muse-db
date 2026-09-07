@@ -6,6 +6,7 @@ import { TIER_ONE_LANGUAGE, TIER_TWO_SQL } from '../services/languages.js';
 import { MOOD_SLUGS } from '../services/moods.js';
 import type { TasteFacts } from '../services/taste.js';
 import { NETWORK_BUCKETS, expandNetworks } from '../services/networks.js';
+import { STUDIO_BUCKETS, expandStudios } from '../services/studios.js';
 import { AGE_CEILINGS } from '../services/ratings.js';
 import { normalizeRegion } from '../services/providers.js';
 
@@ -88,6 +89,7 @@ function buildCandidateQuery(
     skipPopularity?: boolean;
     skipCommitment?: boolean;
     skipNetworks?: boolean;
+    skipStudios?: boolean;
     skipProviders?: boolean;
   } = {}
 ): { fromAndWhere: string; params: unknown[] } {
@@ -277,6 +279,21 @@ function buildCandidateQuery(
     if (networkNames.length > 0) {
       conditions.push(`m.networks && $${paramIndex}`);
       params.push(networkNames);
+      paramIndex++;
+    }
+  }
+
+  // Stüdyo. Yayıncının film tarafındaki karşılığı: kova slug'ı şirket
+  // adlarına açılıyor, tanınmayan slug düşüyor.
+  //
+  // `isTv` şartı var çünkü `companies` dizi satırlarında hiç dolmuyor
+  // (`seed-tv.ts` bu alanı yazmıyor) ve şart olmasa dizide seçili kalmış bir
+  // stüdyo bütün kataloğu elerdi.
+  if (!isTv && !options.skipStudios) {
+    const studioNames = expandStudios(normalizeList(filters.studios));
+    if (studioNames.length > 0) {
+      conditions.push(`m.companies && $${paramIndex}`);
+      params.push(studioNames);
       paramIndex++;
     }
   }
@@ -525,14 +542,16 @@ export async function countEraFacets(
 /**
  * İnce ayar ekranının bütün sayımları — tek çağrıda.
  *
- * Dört boyut var (ruh hâli, yaş, bilinirlik, yayıncı) ve her biri **kendi**
+ * Beş boyut var (ruh hâli, yaş, bilinirlik, ve medya türüne göre yayıncı ya
+ * da stüdyo) ve her biri **kendi**
  * boyutu dışındaki filtreleri paylaşan bir taban sorgu istiyor: "ruh hâli
  * seçilmemişken her ruh hâlinde ne var". Bu yüzden dört ayrı sorgu, ama
  * paralel ve tek HTTP gidiş dönüşünde — ekran hepsini birden çiziyor.
  *
  * Anahtarlar tek bir haritada toplanıyor ve çakışmıyorlar: ruh hâli slug'ları
  * (`cozy`), yaş tavanları (`age:12`), bilinirlik (`famous`) ve yayıncı
- * kovaları (`net:netflix`) ayrı ad alanlarında.
+ * kovaları (`net:netflix`) ve stüdyo kovaları (`std:a24`) ayrı ad
+ * alanlarında.
  *
  * `total` anahtarı ayrı bir iş yapıyor: **bütün** filtreler uygulanmış hâlde
  * kaç başlık kaldığı. Diğer üç sayım ucunda böyle bir değer yok çünkü onlar
@@ -621,8 +640,28 @@ export async function countRefinementFacets(
     );
   };
 
+  // Stüdyo — yayıncının film tarafındaki eşi, ve aynı sebeple yalnızca
+  // kendi medya türünde çalıştırılıyor.
+  const studioQuery = () => {
+    const { fromAndWhere, params } = buildCandidateQuery(filters, excludeMovieIds, {
+      skipStudios: true,
+    });
+    const selects: string[] = [];
+    for (const bucket of STUDIO_BUCKETS) {
+      params.push(bucket.names);
+      selects.push(
+        `COUNT(DISTINCT m.id) FILTER (WHERE m.companies && $${params.length}) AS "std:${bucket.slug}"`
+      );
+    }
+    return pool.query<Record<string, string>>(
+      `SELECT ${selects.join(', ')} ${fromAndWhere}`,
+      params
+    );
+  };
+
   // Yayıncı yalnız dizide anlamlı — film satırlarında `networks` her zaman
-  // boş, ve sekiz kutu için sekiz sıfır saymanın maliyeti var.
+  // boş, ve sekiz kutu için sekiz sıfır saymanın maliyeti var. Stüdyo aynı
+  // simetriyle yalnız filmde: dizi satırlarında `companies` hiç dolmuyor.
   // Sağlayıcı sayımı: taban sorgu kendi filtresi olmadan kuruluyor, sonra
   // bölgenin izleme tablosuyla birleşiyor. CTE + JOIN kullanılıyor çünkü kaç
   // sağlayıcı olacağı önceden bilinmiyor — ruh hâli ya da yaş gibi sabit bir
@@ -661,7 +700,7 @@ export async function countRefinementFacets(
             networkQuery(),
             totalQuery(),
           ]
-        : [moodQuery(), ageQuery(), popularityQuery(), totalQuery()]
+        : [moodQuery(), ageQuery(), popularityQuery(), studioQuery(), totalQuery()]
     ),
     providerQuery(),
   ]);

@@ -7,6 +7,7 @@ import {
 import type { FacetCounts } from '../db/queries.js';
 import type { PickFilters } from '../types/index.js';
 import { NETWORK_BUCKETS } from '../services/networks.js';
+import { STUDIO_BUCKETS } from '../services/studios.js';
 import { config } from '../config.js';
 
 interface RefineCountsRequest {
@@ -22,6 +23,14 @@ interface ProviderChip {
 }
 
 interface NetworkChip {
+  slug: string;
+  name: string;
+}
+
+/** Aynı gövde, ayrı tip: kovalar ayrı listelerde yaşıyor ve sayımları ayrı
+ *  ad alanlarında (`net:` / `std:`). Tek tipe indirmek, iki kovanın aynı
+ *  slug'ı taşıyabildiği gerçeğini gizlerdi. */
+interface StudioChip {
   slug: string;
   name: string;
 }
@@ -43,6 +52,14 @@ interface RefineCountsResponse {
    *  kütüphane büyüdükçe oynuyor ve bunun bir App Store sürümü beklemesi
    *  anlamsız (bkz. `services/networks.ts` başlığı). */
   networks: NetworkChip[];
+
+  /** Stüdyo kutuları — yalnız filmde dolu. Sayımları `counts` içinde
+   *  `std:<slug>` anahtarlarında.
+   *
+   *  Yayıncının film tarafındaki eşi ve ekranda **aynı** soruyu çiziyor
+   *  ("Kim yaptı?"); ayrı alan olmalarının sebebi kovaların gerçekten ayrı
+   *  olması (bkz. `services/studios.ts` başlığı). */
+  studios: StudioChip[];
 }
 
 /**
@@ -54,7 +71,7 @@ interface RefineCountsResponse {
  * o ekranı dört isteğe çıkarırdı.
  *
  * Anahtarlar ayrı ad alanlarında: ruh hâli `cozy`, yaş `age:12`, bilinirlik
- * `famous`, yayıncı `net:netflix`, sağlayıcı `prov:8`.
+ * `famous`, yayıncı `net:netflix`, stüdyo `std:a24`, sağlayıcı `prov:8`.
  *
  * Sağlayıcı kutularının **kimlikleri de** burada dönüyor (`providers`), çünkü
  * hangi kutuların gösterileceği bölgeye göre değişiyor ve uygulamanın bunu
@@ -90,6 +107,11 @@ export async function refineRoutes(fastify: FastifyInstance): Promise<void> {
             active.mediaType === 'tv'
               ? NETWORK_BUCKETS.map((b) => ({ slug: b.slug, name: b.label }))
               : [],
+          // Dizide boş: `movies.companies` dizi satırlarında hiç dolmuyor.
+          studios:
+            active.mediaType === 'tv'
+              ? []
+              : STUDIO_BUCKETS.map((b) => ({ slug: b.slug, name: b.label })),
         };
       } catch (error) {
         request.log.error(error, 'Refinement facet count failed');
