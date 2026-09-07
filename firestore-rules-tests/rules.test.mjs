@@ -277,6 +277,7 @@ const deal = (extra = {}) => ({
   movieTitle: 'Küçük Cadı Kiki',
   movieYear: '1989',
   moviePosterUrl: 'p.jpg',
+  movieBackdropUrl: 'b.jpg',
   dealDate: Timestamp.now(),
   isFulfilled: false,
   fulfilledDate: null,
@@ -298,6 +299,15 @@ await check('uygulamanın gerçekten yazdığı belge kabul ediliyor', async () 
 });
 await check('cevaplanmış söz yazılabiliyor', async () => {
   await assertSucceeds(setDoc(dealRef(db('me'), 'me', 'd2'), deal({ reaction: 'loved' })));
+});
+// Sahne görseli bu alandan önceki kayıtlarda yok ve geriye dönük
+// doldurulamıyor; null yazılabilmesi şart, yoksa eski bir arşivin yeniden
+// senkronu bütün yedeği kırardı.
+await check('sahne görseli null olabiliyor', async () => {
+  await assertSucceeds(setDoc(dealRef(db('me'), 'me', 'd2b'), deal({ movieBackdropUrl: null })));
+});
+await check('sahne görseli metin olmak zorunda', async () => {
+  await assertFails(setDoc(dealRef(db('me'), 'me', 'd2c'), deal({ movieBackdropUrl: 42 })));
 });
 await check('başkasının arşivine yazılamıyor', async () => {
   await assertFails(setDoc(dealRef(db('ali'), 'me', 'd3'), deal()));
