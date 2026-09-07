@@ -1,5 +1,4 @@
 import type { Movie, MovieRow, PickFilters, WeightedCandidate } from '../types/index.js';
-import { config } from '../config.js';
 import { toMovie } from './serialize.js';
 import {
   eraForYear,
@@ -7,7 +6,6 @@ import {
   getMovieKeywords,
   getMoviesGenres,
   getRecentPickMovieIds,
-  isFirstPickForSession,
   recordPick,
   getMoviesTitles,
   getMoviesGenreIds,
@@ -100,7 +98,7 @@ export async function pickMovie(
   ]);
 
   // Step 4: Calculate weights
-  let weightedCandidates: WeightedCandidate[] = candidates.map((movie) => ({
+  const weightedCandidates: WeightedCandidate[] = candidates.map((movie) => ({
     movie,
     weight:
       calculateWeight(movie) *
@@ -108,30 +106,36 @@ export async function pickMovie(
     genres: genresMap.get(movie.id) || [],
   }));
 
-  // Step 5: Apply first-pick bias
-  const isFirstPick = await isFirstPickForSession(sessionId);
-  if (isFirstPick && weightedCandidates.length > 10) {
-    // Sort by weight descending
-    weightedCandidates.sort((a, b) => b.weight - a.weight);
+  // Burada bir zamanlar **ilk seçim yanlılığı** vardı: oturumun hiç seçimi
+  // yoksa aday listesi ağırlığa göre sıralanıp en iyi %30'a kırpılıyordu.
+  // Niyeti "yeni kullanıcının gördüğü ilk film iyi bir film olsun"du.
+  //
+  // Kaldırıldı, çünkü hiçbir zaman o işi yapmadı. `/pick` uygulamada
+  // **yalnızca** ortak söz yolundan çağrılıyor ve `sessionId` olarak davet
+  // kodu gidiyor; davet kodu her ortak sözde yeniden üretildiği için
+  // "bu oturumun ilk seçimi mi" sorusu her seferinde `true` dönüyordu. Yani
+  // kural yeni kullanıcıya değil, **her ortak söze** uygulanıyordu.
+  //
+  // Etkisi ölçüldü (üretim, 40'ar seçim): havuzun medyan oy sayısı 548 iken
+  // taze oturumun getirdiklerinde 2.759, ve kütüphanenin %70'i ortak sözde
+  // hiç çıkamıyordu. Tek kişilik tören zaten hiç yanlılık taşımıyor — o yol
+  // `/pick`'i değil `/candidates`'ı kullanıp tekdüze seçiyor — yani kural iki
+  // yolu birbirinden ayırmaktan başka bir şey yapmıyordu.
+  //
+  // Ağırlıklandırma duruyor ve yeterli: en zayıf film tekdüzenin 0,54 katı,
+  // en güçlüsü 1,83 katı şansa sahip. Eğiyor, dışlamıyor.
 
-    // Keep only top percentile
-    const topCount = Math.ceil(
-      weightedCandidates.length * config.selection.firstPickTopPercentile
-    );
-    weightedCandidates = weightedCandidates.slice(0, topCount);
-  }
-
-  // Step 6: Select using weighted random
+  // Step 5: Select using weighted random
   const selected = weightedRandomSelect(weightedCandidates);
 
   if (!selected) {
     return null;
   }
 
-  // Step 7: Record the pick
+  // Step 6: Record the pick
   await recordPick(sessionId, selected.movie.id, filters, seasonSlug);
 
-  // Step 8: Return the movie
+  // Step 7: Return the movie
   const keywords = await getMovieKeywords(selected.movie.id);
   const titles = await getMoviesTitles([selected.movie.id], language);
   return toMovie(selected.movie, selected.genres, keywords, {

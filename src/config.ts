@@ -68,7 +68,6 @@ export const config = {
     hiddenVotes: 250,
     hiddenVotesTv: 70,
     recentPicksLimit: 20,
-    firstPickTopPercentile: 0.3,
   },
 
   seasons: {

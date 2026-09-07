@@ -1212,15 +1212,6 @@ export async function getRecentPickMovieIds(sessionId: string): Promise<number[]
   return result.rows.map((row) => row.movie_id);
 }
 
-// Check if this is the first pick for a session
-export async function isFirstPickForSession(sessionId: string): Promise<boolean> {
-  const result = await pool.query<{ count: string }>(
-    'SELECT COUNT(*) as count FROM user_picks WHERE session_id = $1',
-    [sessionId]
-  );
-  return parseInt(result.rows[0].count, 10) === 0;
-}
-
 // Record a pick
 export async function recordPick(
   sessionId: string,
