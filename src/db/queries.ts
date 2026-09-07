@@ -907,6 +907,68 @@ export async function getSimilarTitles(
 }
 
 /**
+ * Bir oyuncunun kütüphanedeki diğer yapımları.
+ *
+ * `movie_cast.person_id` migration 011'den beri yazılıyor ve indeksli
+ * (`idx_movie_cast_person`); o migration'ın yorumu bu ekranı öngörerek
+ * "gerektiğinde `person_id` zaten burada duruyor" diyor. Bugüne kadar
+ * `getMovieCast` kimliği seçiyor ama `extras.ts` yanıta koymadan atıyordu.
+ *
+ * Yönetmen şeridinden iki yerde ayrılıyor:
+ *
+ * 1. **Ad değil kimlik eşleşiyor.** Yönetmende `directors && $2` ile isim
+ *    kesişimi yetiyordu; oyuncuda yetmez — "Chris Evans" iki ayrı oyuncu, ve
+ *    isim eşleşmesi ikisinin filmografisini birbirine karıştırırdı.
+ * 2. **Medya türü şartı yok.** Yönetmende var, çünkü bir filme benzer dizi
+ *    önermek töreni bozuyor. Burada soru "buna benzer ne var" değil "bu kişi
+ *    başka ne yapmış" — ve Bryan Cranston'ı sorup *Breaking Bad*'i
+ *    görmemek cevabın kendisini eksiltirdi.
+ *
+ * **Sınır:** `movie_cast` başlık başına yalnızca ilk sekiz oyuncuyu tutuyor
+ * (`scripts/seed-cast.ts` `CAST_LIMIT`). Yani bu liste "bu kişinin oynadığı
+ * her şey" değil, "başrolde olduğu şeyler". Ekranda ona göre adlandırılmalı.
+ */
+export async function getPersonTitles(
+  personId: number,
+  excludeMovieId: number,
+  limit = 12
+): Promise<{ name: string; profilePath: string | null; titles: CollectionSibling[] } | null> {
+  const result = await pool.query<{
+    id: number;
+    title: string;
+    year: number;
+    poster_path: string | null;
+    name: string;
+    profile_path: string | null;
+  }>(
+    `SELECT m.id, m.title, m.year, m.poster_path, mc.name, mc.profile_path
+       FROM movie_cast mc
+       JOIN movies m ON m.id = mc.movie_id
+      WHERE mc.person_id = $1
+        AND m.id <> $2
+        AND m.poster_path IS NOT NULL
+      ORDER BY m.vote_count DESC
+      LIMIT $3`,
+    [personId, excludeMovieId, limit]
+  );
+
+  if (result.rows.length === 0) return null;
+
+  return {
+    // Ad her satırda aynı; ilkini almak yeterli. Kişi tablosu olmadığı için
+    // adın tek kaynağı kadro satırlarının kendisi.
+    name: result.rows[0].name,
+    profilePath: result.rows[0].profile_path,
+    titles: result.rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      year: r.year,
+      posterPath: r.poster_path,
+    })),
+  };
+}
+
+/**
  * Aynı yönetmenin kütüphanedeki diğer yapımları.
  *
  * Kadro ve seri şeritlerinin yanına üçüncü bir keşif ekseni. `movies.directors`

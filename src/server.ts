@@ -12,6 +12,7 @@ import { originRoutes } from './routes/origins.js';
 import { eraRoutes } from './routes/eras.js';
 import { movieRoutes } from './routes/movie.js';
 import { extrasRoutes } from './routes/extras.js';
+import { peopleRoutes } from './routes/people.js';
 import { refineRoutes } from './routes/refine.js';
 import { tasteRoutes } from './routes/taste.js';
 import { seasonRoutes } from './routes/seasons.js';
@@ -77,6 +78,7 @@ export function buildServer() {
   // `/movies/:id/extras` statik son segment taşıdığı için `/movies/:id` onu
   // gölgelemiyor.
   fastify.register(extrasRoutes);
+  fastify.register(peopleRoutes);
   fastify.register(refineRoutes);
   fastify.register(tasteRoutes);
   fastify.register(seasonRoutes);

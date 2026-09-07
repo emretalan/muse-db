@@ -19,6 +19,9 @@ interface ExtrasQuery {
 }
 
 interface PersonCard {
+  /** TMDB kişi kimliği. `/people/:personId/titles` bunun üzerinden
+   *  çağrılıyor; ad üzerinden gidilemez, "Chris Evans" iki ayrı oyuncu. */
+  personId: number;
   name: string;
   character: string | null;
   profileUrl: string | null;
@@ -90,6 +93,7 @@ export async function extrasRoutes(fastify: FastifyInstance): Promise<void> {
 
       return {
         cast: cast.map((person: CastMember) => ({
+          personId: person.personId,
           name: person.name,
           character: person.character,
           // Oyuncu portreleri afişten küçük; w500 gereksiz büyük olurdu ve
