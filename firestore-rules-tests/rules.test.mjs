@@ -83,6 +83,28 @@ await check('yabancı üçüncü koltuğa oturamıyor (masa küçük)', async ()
     'extras.mallory': { joinedAt: Timestamp.now() },
   }));
 });
+
+// Koltuk artık kod ekranında değil imza anında alınıyor: kod ekranı yalnızca
+// okuyup "oturulabilir mi" diye bakıyor (`SharedPactService.lookup`). Aşağıdaki
+// dört durum o okumanın dayandığı kurallar — biri bozulursa vazgeçen davetli
+// yeniden ev sahibinin davetini kilitlemeye başlar.
+await check('davetli koltuğa oturmadan boş sözü okuyabiliyor', async () => {
+  await seed('CCC301');
+  await assertSucceeds(getDoc(ref(db('guest'), 'CCC301')));
+});
+await check('var olmayan kod okunabiliyor (— "bulunamadı" diyebilmek için)', async () => {
+  await assertSucceeds(getDoc(ref(db('guest'), 'ZZZ999')));
+});
+await check('süresi dolmuş ama boş söz okunabiliyor (— "süresi doldu" diyebilmek için)', async () => {
+  await seed('CCC302', { expiresAt: Timestamp.fromDate(new Date(Date.now() - 3600e3)) });
+  await assertSucceeds(getDoc(ref(db('guest'), 'CCC302')));
+});
+await check('koltuğu kapılan davetli imza anında oturamıyor', async () => {
+  await seed('CCC303', { guestUid: 'other', status: 'awaitingSignatures' });
+  await assertFails(updateDoc(ref(db('guest'), 'CCC303'), {
+    guestUid: 'guest', status: 'awaitingSignatures',
+  }));
+});
 await check('giriş yapmamış kullanıcı hiçbir şey yapamıyor', async () => {
   await assertFails(getDoc(ref(anon(), 'BBB222')));
 });
