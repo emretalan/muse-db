@@ -57,6 +57,9 @@ interface TMDBMovie {
   genre_ids?: number[];
   genres?: { id: number; name: string }[];
   production_countries?: { iso_3166_1: string; name: string }[];
+  /** Yapım şirketleri. Seed'in zaten çektiği `/movie/{id}` yanıtının içinde
+   *  geliyor — okumak ek istek maliyeti getirmiyor. */
+  production_companies?: { id: number; name: string }[];
 
   // append_to_response ile aynı çağrıda gelen alt kaynaklar — ek istek değil,
   // sadece daha büyük bir yanıt.
@@ -309,6 +312,21 @@ function extractDirectors(movie: TMDBMovie): string[] | null {
   const crew = movie.credits?.crew;
   if (!crew) return null;
   const names = crew.filter((c) => c.job === 'Director').map((c) => c.name);
+  return names.length > 0 ? [...new Set(names)] : null;
+}
+
+/** Yapım şirketlerinin adları.
+ *
+ *  Ham adlar yazılıyor, kovalanmış hâli değil: kovalar (`services/studios.ts`)
+ *  sunucuda yaşıyor ve kütüphane büyüdükçe oynayacak. Sütuna kova yazmak, her
+ *  kova değişikliğinde on dört bin satırı yeniden çekmek demekti.
+ *
+ *  Üst sınır yok ama pratikte bir filmde 3-8 şirket oluyor; Marvel gibi büyük
+ *  yapımlarda ona çıkabiliyor. */
+function extractCompanies(movie: TMDBMovie): string[] | null {
+  const companies = movie.production_companies;
+  if (!companies || companies.length === 0) return null;
+  const names = companies.map((c) => c.name).filter((n) => n && n.trim().length > 0);
   return names.length > 0 ? [...new Set(names)] : null;
 }
 
@@ -638,9 +656,10 @@ async function upsertMovie(movie: TMDBMovie, minVotes: number): Promise<number |
     `INSERT INTO movies (
       tmdb_id, media_type, title, original_title, year, runtime, synopsis,
       poster_path, vote_average, vote_count, original_language, adult,
-      backdrop_path, tagline, imdb_id, popularity, status, certification, directors
+      backdrop_path, tagline, imdb_id, popularity, status, certification, directors,
+      companies
     ) VALUES ($1, 'movie', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-              $12, $13, $14, $15, $16, $17, $18)
+              $12, $13, $14, $15, $16, $17, $18, $19)
     -- Tekillik 009'dan beri (tmdb_id, media_type) çifti üzerinde: bir film ve
     -- bir dizi aynı TMDB kimliğini taşıyabiliyor, iki ayrı ad alanı.
     ON CONFLICT (tmdb_id, media_type) DO UPDATE SET
@@ -658,7 +677,8 @@ async function upsertMovie(movie: TMDBMovie, minVotes: number): Promise<number |
       -- COALESCE: TMDB bazen bu ikisini boş döndürüyor. Boş bir yanıt yüzünden
       -- daha önce doğru toplanmış bir değeri silmenin anlamı yok.
       certification = COALESCE(EXCLUDED.certification, movies.certification),
-      directors = COALESCE(EXCLUDED.directors, movies.directors)
+      directors = COALESCE(EXCLUDED.directors, movies.directors),
+      companies = COALESCE(EXCLUDED.companies, movies.companies)
     RETURNING id`,
     [
       movie.id,
@@ -679,6 +699,7 @@ async function upsertMovie(movie: TMDBMovie, minVotes: number): Promise<number |
       movie.status || null,
       extractCertification(movie),
       extractDirectors(movie),
+      extractCompanies(movie),
     ]
   );
 
