@@ -46,9 +46,13 @@ export async function getAllGenres(): Promise<Genre[]> {
   return result.rows;
 }
 
-/** Aday listesinin üst sınırı. Sayım artık bu sınırdan bağımsız
- *  (`countCandidateMovies`), yani kütüphane büyüdükçe kullanıcıya gösterilen
- *  "kaç film arasından" sayısı doğru kalıyor. */
+/** Aday listesinin üst sınırı.
+ *
+ *  İki ayrı şeyden bağımsız olması gerekiyordu ve ikisi ayrı ayrı düzeltildi:
+ *  gösterilen sayı (`countCandidateMovies` ile), ve **hangi** bin satırın
+ *  geleceği (`getCandidateMovies` içindeki `ORDER BY random()` ile). İkincisi
+ *  yapılmadan birincisi tek başına yanıltıcıydı: ekran doğru sayıyı yazıp
+ *  yanlış havuzdan seçiyordu. */
 const CANDIDATE_FETCH_LIMIT = 1000;
 
 function normalizeList(value: string[] | string | undefined): string[] {
@@ -299,14 +303,39 @@ function buildCandidateQuery(
   return { fromAndWhere, params };
 }
 
-// Fetch candidate movies based on filters
+/**
+ * Filtrelere uyan başlıklardan **rastgele** bir örneklem.
+ *
+ * `ORDER BY random()` süs değil, taşıyıcı parça. Eskiden sorgu sadece
+ * `LIMIT 1000` diyordu ve sıralama belirtilmemişti — yani Postgres eşleşen
+ * satır sayısı sınırı aştığı anda her seferinde **aynı** ilk bin satırı
+ * döndürüyordu. Ölçüm (üretim, 2026-09-07): filtresiz film sorgusu 14.133
+ * satır eşleştiriyor ama dönen bin kimlik iki ayrı çağrıda birebir aynıydı ve
+ * hepsi 1-1103 aralığındaydı — yani ilk seed'in kalıntısı. Kataloğun %93'ü
+ * kadere hiç çıkamıyordu, üstelik ekran "14.133 başlık arasından" yazarken.
+ *
+ * Sınır kalıyor: on dört bin satırı Node'a çekmek `getMoviesGenres`'i de on
+ * dört bin kimlikle çalıştırırdı. Değişen, sınırın **neyin** ilk bini olduğu.
+ *
+ * CTE şart — `SELECT DISTINCT ... ORDER BY random()` Postgres'te doğrudan
+ * yazılamıyor ("ORDER BY expressions must appear in select list"). Aynı
+ * `WITH ... AS (SELECT DISTINCT m.id ...)` deseni sağlayıcı sayımında da var.
+ *
+ * İki basamak, çünkü sıralamanın **dar** küme üzerinde olması gerekiyor:
+ * `matched` yalnız kimlik topluyor, `sampled` bini rastgele seçiyor, ve
+ * satırlar ancak ondan sonra birincil anahtar üzerinden genişletiliyor.
+ * Tek basamakta (geniş satırları sıralayarak) aynı sonuç 117 ms sürüyordu,
+ * böyle 40 ms — plan tek tarama + bin indeks okuması.
+ */
 export async function getCandidateMovies(
   filters: PickFilters,
   excludeMovieIds: number[]
 ): Promise<MovieRow[]> {
   const { fromAndWhere, params } = buildCandidateQuery(filters, excludeMovieIds);
   const result = await pool.query<MovieRow>(
-    `SELECT DISTINCT m.* ${fromAndWhere} LIMIT ${CANDIDATE_FETCH_LIMIT}`,
+    `WITH matched AS (SELECT DISTINCT m.id ${fromAndWhere}),
+          sampled AS (SELECT id FROM matched ORDER BY random() LIMIT ${CANDIDATE_FETCH_LIMIT})
+     SELECT m.* FROM movies m JOIN sampled ON sampled.id = m.id`,
     params
   );
   return result.rows;

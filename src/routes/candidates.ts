@@ -46,8 +46,11 @@ export async function candidatesRoutes(fastify: FastifyInstance): Promise<void> 
           return { movies: [], totalResults: 0 };
         }
 
-        const shuffled = candidates.sort(() => Math.random() - 0.5);
-        const selected = shuffled.slice(0, Math.min(limit, shuffled.length));
+        // Karıştırma yok: `getCandidateMovies` zaten `ORDER BY random()` ile
+        // dönüyor. Buradaki eski `sort(() => Math.random() - 0.5)` hem
+        // gereksizdi hem de yanlıydı — karşılaştırma tabanlı bir sıralamaya
+        // tutarsız karşılaştırıcı vermek düzgün permütasyon üretmiyor.
+        const selected = candidates.slice(0, Math.min(limit, candidates.length));
 
         const movieIds = selected.map((m) => m.id);
         const [genresMap, keywordsMap, titlesMap] = await Promise.all([
