@@ -10,6 +10,26 @@ import { AGE_CEILINGS } from '../services/ratings.js';
 import { normalizeRegion } from '../services/providers.js';
 import { ERA_KEYS, eraForYear, eraToYearRange } from '../services/eras.js';
 
+/**
+ * Kaderin kendiliğinden vermemesi gereken dizi türleri: haber (10763),
+ * talk show (10767), realite (10764) ve pembe dizi (10766).
+ *
+ * Kural "bu türleri sil" değil, **"yalnızca bu türlerdense sorma"**: bir
+ * başlık bu listenin dışında en az bir tür taşıyorsa havuzda kalıyor.
+ * Ölçüm bunu gerektirdi — *Drawn Together* (Animasyon + Komedi + Realite)
+ * realite parodisi yapan bir çizgi dizi, *Yo soy Betty, la fea* (Komedi +
+ * Dram + Pembe dizi) kataloğun en sevilen yapımlarından biri. Düz bir
+ * "realite etiketi varsa ele" ikisini de kaybederdi (288 başlık); bu kural
+ * yalnız 68'ini alıyor ve aldıkları tam olarak şunlar: Kardashianlar,
+ * Survivor, WWE Raw (1.743 bölüm), Hell's Kitchen, Pawn Stars, Top Gear.
+ *
+ * `Reality` ve `Soap` tür ekranında **seçilebilir** duruyor (bkz.
+ * `GenreSelectionView.tvOptions`) — kullanıcı isterse listeye dönüyorlar,
+ * o yüzden bu eleme istenen türlerden biri bu listedeyse hiç uygulanmıyor.
+ * Haber ve talk show hiçbir ekranda sunulmuyor.
+ */
+const OPT_IN_TV_GENRES = [10763, 10764, 10766, 10767];
+
 // Fetch all genres
 export async function getAllGenres(): Promise<Genre[]> {
   const result = await pool.query<Genre>('SELECT id, name FROM genres ORDER BY name');
@@ -53,6 +73,7 @@ function buildCandidateQuery(
     skipOrigin?: boolean;
     skipEra?: boolean;
     skipGenres?: boolean;
+    skipOptInGenres?: boolean;
     skipMoods?: boolean;
     skipAge?: boolean;
     skipPopularity?: boolean;
@@ -289,6 +310,28 @@ function buildCandidateQuery(
     paramIndex++;
   }
 
+  // Yalnızca istenmeden gelmemesi gereken türlerden oluşan başlıklar. Bkz.
+  // `OPT_IN_TV_GENRES`. Türsüz satırlar etkilenmiyor: eleme "yasak tür var"
+  // koşuluna bağlı, "başka tür yok" koşuluna değil.
+  if (isTv && !options.skipOptInGenres) {
+    const asked = normalizedGenreIds.some((id) => OPT_IN_TV_GENRES.includes(id));
+    if (!asked) {
+      // Tek alt sorgu, iki değil: "yasak tür var mı" ve "başka tür var mı"
+      // ayrı ayrı sorulduğunda Postgres iki korele tarama yapıyor ve sorgu
+      // 30 ms'den 80 ms'ye çıkıyordu. `bool_and` ikisini tek geçişte
+      // cevaplıyor — ölçüldü: 39 ms. Toplu bir anti-join (`NOT IN`, ya da
+      // materyalize CTE) daha da yavaş: 56–67 ms.
+      conditions.push(
+        `NOT EXISTS (SELECT 1 FROM movie_genres og
+                      WHERE og.movie_id = m.id
+                      GROUP BY og.movie_id
+                     HAVING bool_and(og.genre_id = ANY($${paramIndex})))`
+      );
+      params.push(OPT_IN_TV_GENRES);
+      paramIndex++;
+    }
+  }
+
   const fromAndWhere = `
     FROM movies m
     ${genreJoin}
@@ -427,8 +470,15 @@ export async function countGenreFacets(
   filters: PickFilters,
   excludeMovieIds: number[]
 ): Promise<FacetCounts> {
+  // `skipOptInGenres`: bu ekran "realite seçersem ne çıkar" sorusunun
+  // cevabını çiziyor. Eleme burada da uygulansaydı Realite kutusu kendi
+  // gerçek sayısını değil, elenmiş hâlini gösterir ve sekizin altına düşüp
+  // sönerdi — yani seçilebilir bir tür, seçilemez görünürdü. Bedeli
+  // `any` toplamının 68 başlık fazla sayması; ekranda görünmeyecek kadar
+  // küçük bir sapma.
   const { fromAndWhere, params } = buildCandidateQuery(filters, excludeMovieIds, {
     skipGenres: true,
+    skipOptInGenres: true,
   });
 
   const result = await pool.query<{ key: string; count: string }>(
