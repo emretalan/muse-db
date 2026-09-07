@@ -7,6 +7,7 @@ import {
   getMoviesGenres,
   getRecentPickMovieIds,
   recordPick,
+  recordSeasonStart,
   getMoviesTitles,
   getMoviesGenreIds,
 } from '../db/queries.js';
@@ -134,6 +135,11 @@ export async function pickMovie(
 
   // Step 6: Record the pick
   await recordPick(sessionId, selected.movie.id, filters, seasonSlug);
+  // Sezondan başlayan ortak sözler de sayaca girsin. Ayrı bir çağrı, çünkü
+  // sayacın kaynağı `user_picks` değil (bkz. `019_season_starts.sql`).
+  if (seasonSlug) {
+    await recordSeasonStart(sessionId, seasonSlug);
+  }
 
   // Step 7: Return the movie
   const keywords = await getMovieKeywords(selected.movie.id);

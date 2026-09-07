@@ -221,6 +221,25 @@ export function seasonsForMonth(month: number): Season[] {
   return SEASONS.filter((s) => s.months.includes(month));
 }
 
+const SEASON_SLUGS = new Set(SEASONS.map((s) => s.slug));
+
+/**
+ * Gelen slug gerçek bir sezona mı ait.
+ *
+ * Uçlar eskiden yalnızca **biçim** denetliyordu (`/^[a-z0-9-]{1,40}$/`) ve
+ * gerekçesi "uydurulmuş bir değer kaderi etkilemiyor, en fazla kendi sezonunun
+ * sayacını şişirir"di. Sayaç gerçekten çalışmaya başladığından beri o gerekçe
+ * geçerli değil: uydurma bir slug artık var olmayan bir sezon için satır
+ * yazardı.
+ *
+ * Ay kontrolü **yok**, bilerek: sezonun o ay açık olup olmadığına `/seasons`
+ * karar veriyor ve ay sınırı istemcinin saat diliminden geliyor. Burada ayı da
+ * denetlemek, ay dönümünde başlayan bir töreni sayıdan düşürürdü.
+ */
+export function isSeasonSlug(value: unknown): value is string {
+  return typeof value === 'string' && SEASON_SLUGS.has(value);
+}
+
 export function localize(season: Season, lang: string | null): {
   title: string;
   subtitle: string;

@@ -4,6 +4,7 @@ import type { PickRequest, PickResponse } from '../types/index.js';
 import { normalizeLanguage } from '../services/languages.js';
 import { sanitizeVector } from '../services/taste.js';
 import { sanitizePickFilters } from '../services/filters.js';
+import { isSeasonSlug } from '../services/seasons.js';
 
 export async function pickRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.post<{ Body: PickRequest; Reply: PickResponse | { error: string } }>(
@@ -69,12 +70,11 @@ export async function pickRoutes(fastify: FastifyInstance): Promise<void> {
           safeExcludeIds,
           language,
           sanitizeVector(taste),
-          // Slug yalnızca kayda geçiyor. Uydurulmuş bir değer kaderi
-          // etkilemiyor; en fazla kendi sezonunun sayacını şişirir, o yüzden
-          // biçim denetimi (uzunluk + karakter) yeterli.
-          typeof seasonSlug === 'string' && /^[a-z0-9-]{1,40}$/.test(seasonSlug)
-            ? seasonSlug
-            : null
+          // Slug kaderi etkilemiyor ama artık **gerçek bir sayı** üretiyor:
+          // sezon kartındaki "bu ay N kişi yola çıktı" satırı. Bu yüzden biçim
+          // denetimi yetmiyor, gerçek bir sezona ait olması gerekiyor —
+          // uydurma bir slug var olmayan bir sezon için satır yazardı.
+          isSeasonSlug(seasonSlug) ? seasonSlug : null
         );
 
         if (!movie) {

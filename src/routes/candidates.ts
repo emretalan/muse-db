@@ -6,11 +6,13 @@ import {
   getMoviesKeywords,
   getMoviesTitles,
   getRecentPickMovieIds,
+  recordSeasonStart,
 } from '../db/queries.js';
 import { normalizeLanguage } from '../services/languages.js';
 import type { PickFilters, Movie, MovieRow } from '../types/index.js';
 import { toMovie } from '../services/serialize.js';
 import { sanitizePickFilters } from '../services/filters.js';
+import { isSeasonSlug } from '../services/seasons.js';
 
 interface CandidatesRequest {
   filters: PickFilters;
@@ -19,6 +21,12 @@ interface CandidatesRequest {
   excludeMovieIds?: number[];
   /** Uygulamanın dili — başlıklar bu dilde döner. Gönderilmezse İngilizce. */
   lang?: string;
+  /** Tören bir tematik sezonun kapısından başladıysa o sezonun slug'ı.
+   *
+   *  Yalnızca sayım için: sezon kartındaki "bu ay N kişi yola çıktı" satırı
+   *  buradan çıkıyor. Aday listesine hiç etkisi yok — sezonun etkisi zaten
+   *  `filters` içinde. */
+  seasonSlug?: string;
 }
 
 interface CandidatesResponse {
@@ -30,7 +38,8 @@ export async function candidatesRoutes(fastify: FastifyInstance): Promise<void> 
   fastify.post<{ Body: CandidatesRequest; Reply: CandidatesResponse | { error: string } }>(
     '/candidates',
     async (request, reply) => {
-      const { filters, limit = 30, sessionId, excludeMovieIds, lang } = request.body;
+      const { filters, limit = 30, sessionId, excludeMovieIds, lang, seasonSlug } =
+        request.body;
       const language = normalizeLanguage(lang);
 
       // Gövde tipli arayüze cast edildi ama doğrulanmadı; bozuk bir alan
@@ -48,6 +57,15 @@ export async function candidatesRoutes(fastify: FastifyInstance): Promise<void> 
         const clientExcludeIds = Array.isArray(excludeMovieIds) ? excludeMovieIds : [];
         const excludeIds = [...new Set([...recentIds, ...clientExcludeIds])];
         
+        // Sezon sayacı. Yanıtı **bekletmiyor ve düşürmüyor**: bu uç törenin
+        // kritik yolunda ve bir sayaç yazımının kaderi engellemesi kabul
+        // edilemez. Slug gerçek bir sezona ait değilse hiç yazılmıyor.
+        if (sessionId && isSeasonSlug(seasonSlug)) {
+          void recordSeasonStart(sessionId, seasonSlug).catch((error) => {
+            request.log.warn(error, 'Sezon başlangıcı yazılamadı');
+          });
+        }
+
         const candidates = await getCandidateMovies(safeFilters, excludeIds);
 
         if (candidates.length === 0) {

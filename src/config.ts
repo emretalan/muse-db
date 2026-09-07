@@ -75,10 +75,16 @@ export const config = {
      * Sezon kartındaki "bu ay N kişi yola çıktı" satırı bu sayının altında
      * hiç gösterilmiyor.
      *
-     * Eşiğin sebebi ölçüm: bugün `user_picks`te toplam 40 seçim ve 37 kişi
-     * var, bu ay 15 kişi. Bir sezona düşen pay 3-5 kişi olurdu ve "3 kişi
-     * yola çıktı" hiç göstermemekten kötü — davet etmesi gereken bir satırın
-     * boş bir salonu göstermesi.
+     * Sayının kaynağı `season_starts` tablosu (`019_season_starts.sql`).
+     *
+     * Eşik **ölçülmüş değil, tahmin** — ve bu satır bir zamanlar tersini
+     * söylüyordu ("bugün `user_picks`te 40 seçim ve 37 kişi var"). O 40 satır
+     * sınamaydı: sayaç 017'den beri hiç yazmıyordu ve `user_picks`te gerçek
+     * bir cihazdan gelen tek satır yoktu. Gerçek trafik biriktiğinde eşik
+     * yeniden ölçülmeli.
+     *
+     * Gerekçesi duruyor: "3 kişi yola çıktı" hiç göstermemekten kötü — davet
+     * etmesi gereken bir satırın boş bir salonu göstermesi.
      *
      * Buradan ayarlanabilmesi bilinçli, `finishableMinutes` ile aynı
      * gerekçeyle: sayı gerçekleştiğinde satırı açmak bir App Store sürümü
