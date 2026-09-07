@@ -170,6 +170,34 @@ await check('masada olmayan biri sonucu yazamıyor', async () => {
   }));
 });
 
+console.log('\nKURA — iki kişilik sözün düellosu');
+await env.clearFirestore();
+// Kura yalnızca **iki kişilik** sözde yazılıyor (`SharedPactWaitingView.resolve`
+// grup masasında eski birleştirmeye düşüyor), o yüzden sınama da orada.
+await seed('DUE111', { guestUid: 'guest', status: 'awaitingSignatures',
+                       guestFilters: { mediaType: 'movie' } });
+const sampleDuel = (winner) => ({
+  version: 1, startsAt: Timestamp.now(), winnerUid: winner,
+  sides: [{ uid: 'host', name: 'Ali', movie: { id: 1, title: 'X' } },
+          { uid: 'guest', name: 'Ayşe', movie: { id: 2, title: 'Y' } }],
+});
+// `duel` kurallara **eklenmedi**: "masadaki kişi" kuralı yalnızca adı geçen
+// alanları donduruyor, dolayısıyla yeni bir alan koltuk sahibine zaten açık,
+// yabancıya zaten kapalı. Bu iki sınama onu bir varsayım olmaktan çıkarıp
+// ölçülmüş bir davranışa çeviriyor.
+await check('koltuk sahibi kurayı ve sonucu birlikte yazabiliyor', async () => {
+  await assertSucceeds(updateDoc(ref(db('guest'), 'DUE111'), {
+    duel: sampleDuel('host'),
+    resultMovie: { id: 1, title: 'X' },
+    status: 'sealed',
+  }));
+});
+await check('masada olmayan biri kurayı yazamıyor', async () => {
+  await assertFails(updateDoc(ref(db('mallory'), 'DUE111'), {
+    duel: sampleDuel('mallory'),
+  }));
+});
+
 console.log('\nMASAYI KAPATMA');
 await env.clearFirestore();
 await seed('EEE555', { allowsGroup: true, guestUid: 'guest', status: 'awaitingSignatures',
