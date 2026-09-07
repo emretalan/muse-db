@@ -10,6 +10,7 @@ import {
 import { normalizeLanguage } from '../services/languages.js';
 import type { PickFilters, Movie, MovieRow } from '../types/index.js';
 import { toMovie } from '../services/serialize.js';
+import { sanitizePickFilters } from '../services/filters.js';
 
 interface CandidatesRequest {
   filters: PickFilters;
@@ -32,6 +33,13 @@ export async function candidatesRoutes(fastify: FastifyInstance): Promise<void> 
       const { filters, limit = 30, sessionId, excludeMovieIds, lang } = request.body;
       const language = normalizeLanguage(lang);
 
+      // Gövde tipli arayüze cast edildi ama doğrulanmadı; bozuk bir alan
+      // sorguyu 500 ile düşürürdü. Tanınmayanı düşürüp devam ediyoruz.
+      const { filters: safeFilters, dropped } = sanitizePickFilters(filters);
+      if (dropped.length > 0) {
+        request.log.warn({ dropped }, 'Candidates: bozuk filtre alanları düşürüldü');
+      }
+
       try {
         // Exclude recently picked movies if a session ID is provided
         const recentIds = sessionId ? await getRecentPickMovieIds(sessionId) : [];
@@ -40,7 +48,7 @@ export async function candidatesRoutes(fastify: FastifyInstance): Promise<void> 
         const clientExcludeIds = Array.isArray(excludeMovieIds) ? excludeMovieIds : [];
         const excludeIds = [...new Set([...recentIds, ...clientExcludeIds])];
         
-        const candidates = await getCandidateMovies(filters || {}, excludeIds);
+        const candidates = await getCandidateMovies(safeFilters, excludeIds);
 
         if (candidates.length === 0) {
           return { movies: [], totalResults: 0 };
@@ -69,7 +77,7 @@ export async function candidatesRoutes(fastify: FastifyInstance): Promise<void> 
         // `candidates.length` değil: aday listesi CANDIDATE_FETCH_LIMIT ile
         // kırpılıyor, o yüzden filtresiz bir sorguda "1000" diyordu — gerçek
         // sayı 1.659'du. Uygulama bunu kullanıcıya gösteriyor.
-        const totalResults = await countCandidateMovies(filters || {}, excludeIds);
+        const totalResults = await countCandidateMovies(safeFilters, excludeIds);
 
         return { movies, totalResults };
       } catch (error) {

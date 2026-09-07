@@ -3,6 +3,7 @@ import { pickMovie } from '../services/picker.js';
 import type { PickRequest, PickResponse } from '../types/index.js';
 import { normalizeLanguage } from '../services/languages.js';
 import { sanitizeVector } from '../services/taste.js';
+import { sanitizePickFilters } from '../services/filters.js';
 
 export async function pickRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.post<{ Body: PickRequest; Reply: PickResponse | { error: string } }>(
@@ -17,7 +18,14 @@ export async function pickRoutes(fastify: FastifyInstance): Promise<void> {
 
       const { sessionId, filters, excludeMovieIds, lang, taste, seasonSlug } = body as PickRequest;
       const language = normalizeLanguage(lang);
-      const safeFilters = filters || {};
+      // Gövde doğrulanmadan `PickFilters`'a cast edilmişti; bozuk bir alan
+      // sorguyu 500 ile düşürürdü. Aşağıdaki süre denetimi de bu yüzden
+      // temizlenmiş sayılar üzerinde çalışmak zorunda: `'abc' < 60` JS'te
+      // `false` döndüğü için eski hâlinde kontrolden sızıyordu.
+      const { filters: safeFilters, dropped } = sanitizePickFilters(filters);
+      if (dropped.length > 0) {
+        request.log.warn({ dropped }, 'Pick: bozuk filtre alanları düşürüldü');
+      }
       const safeExcludeIds = Array.isArray(excludeMovieIds)
         ? excludeMovieIds.filter((id) => Number.isInteger(id))
         : [];
@@ -51,16 +59,6 @@ export async function pickRoutes(fastify: FastifyInstance): Promise<void> {
       if (safeFilters.maxDuration !== undefined && safeFilters.maxDuration < durationFloor) {
         return reply.status(400).send({
           error: `maxDuration must be at least ${durationFloor} minutes.`,
-        });
-      }
-
-      if (
-        safeFilters.genreIds !== undefined &&
-        !Array.isArray(safeFilters.genreIds) &&
-        typeof safeFilters.genreIds !== 'number'
-      ) {
-        return reply.status(400).send({
-          error: 'genreIds must be a number or an array of numbers.',
         });
       }
 

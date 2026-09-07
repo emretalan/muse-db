@@ -9,6 +9,7 @@ import type { PickFilters } from '../types/index.js';
 import { NETWORK_BUCKETS } from '../services/networks.js';
 import { STUDIO_BUCKETS } from '../services/studios.js';
 import { config } from '../config.js';
+import { sanitizePickFilters } from '../services/filters.js';
 
 interface RefineCountsRequest {
   filters?: PickFilters;
@@ -88,7 +89,13 @@ export async function refineRoutes(fastify: FastifyInstance): Promise<void> {
         const clientExcludeIds = Array.isArray(excludeMovieIds) ? excludeMovieIds : [];
         const excludeIds = [...new Set([...recentIds, ...clientExcludeIds])];
 
-        const active = filters ?? {};
+        // Temizlik uçta yapılıyor, sorgu katmanında değil: bu uç `mediaType`
+        // ve `region`'ı **kendisi** okuyup hangi kutuların döneceğine karar
+        // veriyor (yayıncı mı stüdyo mu, hangi bölgenin sağlayıcıları).
+        const { filters: active, dropped } = sanitizePickFilters(filters);
+        if (dropped.length > 0) {
+          request.log.warn({ dropped }, 'Refine: bozuk filtre alanları düşürüldü');
+        }
         const [counts, providers] = await Promise.all([
           countRefinementFacets(active, excludeIds),
           getRegionProviders(active.region ?? '', active.mediaType === 'tv' ? 'tv' : 'movie'),

@@ -1,7 +1,7 @@
 import type { Movie, MovieRow, PickFilters, WeightedCandidate } from '../types/index.js';
 import { toMovie } from './serialize.js';
+import { eraForYear } from './eras.js';
 import {
-  eraForYear,
   getCandidateMovies,
   getMovieKeywords,
   getMoviesGenres,
