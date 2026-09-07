@@ -6,6 +6,7 @@ import {
 } from '../db/queries.js';
 import type { FacetCounts } from '../db/queries.js';
 import type { PickFilters } from '../types/index.js';
+import { NETWORK_BUCKETS } from '../services/networks.js';
 import { config } from '../config.js';
 
 interface RefineCountsRequest {
@@ -20,6 +21,11 @@ interface ProviderChip {
   logoUrl: string | null;
 }
 
+interface NetworkChip {
+  slug: string;
+  name: string;
+}
+
 interface RefineCountsResponse {
   counts: FacetCounts;
   /** Kullanıcının bölgesinde gösterilecek sağlayıcı kutuları — kimlik, ad ve
@@ -28,6 +34,15 @@ interface RefineCountsResponse {
    *  Ayrı bir uçta durabilirdi ama o zaman ekran iki istek atardı; ve liste
    *  önbellekli olduğu için burada durmasının maliyeti yok. */
   providers: ProviderChip[];
+
+  /** Yayıncı kutuları — yalnız dizide dolu. Sayımları `counts` içinde
+   *  `net:<slug>` anahtarlarında (bunlar zaten dönüyordu; eksik olan
+   *  kutuların kendisiydi, o yüzden ekran bölümü hiç çizemiyordu).
+   *
+   *  Sağlayıcılar gibi sunucudan gidiyor ve aynı gerekçeyle: kova sınırları
+   *  kütüphane büyüdükçe oynuyor ve bunun bir App Store sürümü beklemesi
+   *  anlamsız (bkz. `services/networks.ts` başlığı). */
+  networks: NetworkChip[];
 }
 
 /**
@@ -69,6 +84,12 @@ export async function refineRoutes(fastify: FastifyInstance): Promise<void> {
             name: p.name,
             logoUrl: p.logoPath ? `${config.tmdbLogoBaseUrl}${p.logoPath}` : null,
           })),
+          // Filmde boş: `movies.networks` film satırlarında her zaman boş ve
+          // sekiz sönük kutu göstermenin anlamı yok.
+          networks:
+            active.mediaType === 'tv'
+              ? NETWORK_BUCKETS.map((b) => ({ slug: b.slug, name: b.label }))
+              : [],
         };
       } catch (error) {
         request.log.error(error, 'Refinement facet count failed');

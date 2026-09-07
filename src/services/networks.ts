@@ -24,34 +24,42 @@
 
 export interface NetworkBucket {
   slug: string;
+  /** Kutunun üstündeki yazı.
+   *
+   *  Sunucudan gidiyor çünkü kovaların kendisi burada yaşıyor (bkz. dosya
+   *  başlığı) ve istemciye gömülen bir liste, kova sınırları oynadığında
+   *  bir App Store sürümü beklerdi. Marka adları zaten çevrilmiyor;
+   *  çevrilebilir olan ikisini (`usnetworks`, `britain`) istemci kendi
+   *  kataloğundan karşılıyor ve tanımadığı slug'da buraya düşüyor. */
+  label: string;
   /** `movies.networks` içinde birebir aranan adlar. TMDB aynı yayıncıyı
    *  yıllara göre farklı adlarla kaydediyor (HBO Max -> Max), o yüzden liste. */
   names: string[];
 }
 
 export const NETWORK_BUCKETS: NetworkBucket[] = [
-  { slug: 'netflix', names: ['Netflix'] },
+  { slug: 'netflix', label: 'Netflix', names: ['Netflix'] },
   {
-    slug: 'prime',
+    slug: 'prime', label: 'Prime Video',
     names: ['Prime Video', 'Amazon Prime Video', 'Amazon', 'Amazon Freevee'],
   },
   {
-    slug: 'disney',
+    slug: 'disney', label: 'Disney+',
     names: ['Disney+', 'Disney Channel', 'Disney XD', 'Disney+ Hotstar', 'Disney Junior'],
   },
   {
     // Aynı yayıncının üç adı: HBO, HBO Max, Max. Ayrı kutular olsalardı
     // "Game of Thrones nerede" sorusu üç yere bakmayı gerektirirdi.
-    slug: 'hbo',
+    slug: 'hbo', label: 'HBO / Max',
     names: ['HBO', 'HBO Max', 'Max', 'HBO Europe', 'HBO España', 'Cinemax'],
   },
-  { slug: 'appletv', names: ['Apple TV', 'Apple TV+'] },
-  { slug: 'hulu', names: ['Hulu', 'Hulu Japan'] },
+  { slug: 'appletv', label: 'Apple TV+', names: ['Apple TV', 'Apple TV+'] },
+  { slug: 'hulu', label: 'Hulu', names: ['Hulu', 'Hulu Japan'] },
   {
     // ABD'nin ulusal kanalları ve kablo ağları. Tek tek kutulara bölünecek
     // kadar derin değiller (en kalabalığı NBC, 124 dizi) ama toplandıklarında
     // kataloğun en büyük ikinci yayıncı kümesi.
-    slug: 'usnetworks',
+    slug: 'usnetworks', label: 'US networks',
     names: [
       'NBC', 'ABC', 'CBS', 'FOX', 'The CW', 'The WB', 'UPN',
       'AMC', 'AMC+', 'FX', 'FXX', 'USA Network', 'TNT', 'TBS',
@@ -62,7 +70,7 @@ export const NETWORK_BUCKETS: NetworkBucket[] = [
     ],
   },
   {
-    slug: 'britain',
+    slug: 'britain', label: 'British TV',
     names: [
       'BBC One', 'BBC Two', 'BBC Three', 'BBC Four', 'BBC America', 'BBC',
       'ITV', 'ITV1', 'ITV2', 'ITVX', 'Channel 4', 'Channel 5', 'E4', 'More4',
