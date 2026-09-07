@@ -30,15 +30,27 @@ export async function pickRoutes(fastify: FastifyInstance): Promise<void> {
       }
 
       // Validate filters
-      if (safeFilters.minDuration !== undefined && safeFilters.minDuration < 60) {
+      //
+      // Taban türe bağlı. Filmde 60 dakika eskiden beri doğru: uzun metrajın
+      // altı elenmiş sayılıyor. Dizide aynı sayı yanlış — `movies.runtime`
+      // dizi satırlarında **ilk bölümün** süresi ve bir sitcom bölümü 22
+      // dakika. 60 tabanı, uygulamanın dizideki üç somut süre seçeneğinin
+      // (`<30`, `30–50`, `50+`) üçünü birden reddediyordu; ortak sözde dizi
+      // seçen herkes "kadere ulaşılamadı" alıyordu.
+      //
+      // Alt sınır tohumlamanın kendi eşiği: `scripts/seed-tv.ts`
+      // `MIN_EPISODE_RUNTIME = 10`, yani bundan kısa bölüm katalogda yok.
+      const durationFloor = safeFilters.mediaType === 'tv' ? 1 : 60;
+
+      if (safeFilters.minDuration !== undefined && safeFilters.minDuration < durationFloor) {
         return reply.status(400).send({
-          error: 'minDuration must be at least 60 minutes.',
+          error: `minDuration must be at least ${durationFloor} minutes.`,
         });
       }
 
-      if (safeFilters.maxDuration !== undefined && safeFilters.maxDuration < 60) {
+      if (safeFilters.maxDuration !== undefined && safeFilters.maxDuration < durationFloor) {
         return reply.status(400).send({
-          error: 'maxDuration must be at least 60 minutes.',
+          error: `maxDuration must be at least ${durationFloor} minutes.`,
         });
       }
 
