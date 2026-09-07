@@ -13,7 +13,7 @@
  *   genreIds: ["a"]     -> aynı
  *
  * 500, kullanıcıyı törenin ortasında bırakıyor. Bu yüzden tanınmayan değer
- * **düşürülüyor**, istek reddedilmiyor: `origin`, `networks` ve `studios`
+ * **düşürülüyor**, istek reddedilmiyor: `origin` ve `networks`
  * zaten yıllardır böyle davranıyor, ve gevşemiş bir filtre çökmüş bir törenden
  * iyidir. Düşen alanlar `dropped` ile geri dönüyor ki uç sunucu günlüğüne
  * yazabilsin — istemci hatası sessizce kaybolmasın.
@@ -109,7 +109,6 @@ export function sanitizePickFilters(raw: unknown): SanitizedFilters {
   filters.origin = take('origin', stringList);
   filters.originCountries = take('originCountries', stringList);
   filters.networks = take('networks', stringList);
-  filters.studios = take('studios', stringList);
   filters.providers = take('providers', intList);
 
   // Bölge metin olmalı; hangi bölgelerin tanındığına `normalizeRegion` karar

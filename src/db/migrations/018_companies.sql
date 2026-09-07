@@ -13,9 +13,16 @@
 -- ihtiyaç yok ve `countries` tablosunun başına gelen tam olarak bu —
 -- kimsenin okumadığı bir tablo.
 --
--- Ham adlar tutuluyor, kovalanmış hâli değil: kovalar (`services/studios.ts`)
--- kütüphane büyüdükçe oynayacak ve sunucuda yaşıyorlar. Sütuna kova yazmak,
--- her kova değişikliğinde 14 bin satırı yeniden yazmak demekti.
+-- Ham adlar tutuluyor, kovalanmış hâli değil: kovalar kütüphane büyüdükçe
+-- oynayacak ve sunucuda yaşıyorlardı. Sütuna kova yazmak, her kova
+-- değişikliğinde 14 bin satırı yeniden yazmak demekti.
+--
+-- SONRADAN: stüdyo kovaları (`services/studios.ts`) ve filmdeki "Kim yaptı?"
+-- bölümü kaldırıldı — filmde o soruyu sağlayıcı bölümü zaten karşılıyor ve
+-- iki bölüm aynı ekranda birbirini tekrar ediyordu. Sütun ve indeksi
+-- **duruyor**, seed hâlâ dolduruyor: veri zaten çektiğimiz yanıtın içinde,
+-- yani taşıma maliyeti sıfır, ama 107 dakikalık geri doldurmayı ikinci kez
+-- yapmak istemeyiz. Bugün hiçbir sorgu okumuyor.
 ALTER TABLE movies ADD COLUMN IF NOT EXISTS companies TEXT[];
 
 CREATE INDEX IF NOT EXISTS idx_movies_companies ON movies USING GIN(companies);

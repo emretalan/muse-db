@@ -166,14 +166,6 @@ export interface PickFilters {
    *  iki ayrı soru. */
   networks?: string[] | string;
 
-  /** Stüdyo kovası slug'ları (`"a24"` — bkz. `services/studios.ts`).
-   *  Yalnız filmde anlamlı; dizi satırlarında `companies` boş.
-   *
-   *  Yayıncının film tarafındaki karşılığı ve aynı soruyu soruyor: "kim
-   *  yaptı". Ayrı bir alan olması şart, çünkü kovalar ayrı — Netflix bir
-   *  kanal, A24 bir yapımcı ve ikisi aynı listede duramaz. */
-  studios?: string[] | string;
-
   /** Sözün büyüklüğü. `finishable` yalnız **bitmiş** ve toplamı
    *  `config.selection.finishableMinutes` altında kalan dizileri getiriyor —
    *  yani `pledgeKind` alanının `'series'` döndürdüğü satırların tamamı.
