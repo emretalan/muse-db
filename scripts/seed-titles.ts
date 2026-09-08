@@ -21,7 +21,7 @@
 
 import { pool } from '../src/db/client.js';
 import { config } from '../src/config.js';
-import { TRANSLATION_REGIONS } from '../src/services/languages.js';
+import { TRANSLATION_LANGUAGES, TRANSLATION_TARGETS } from '../src/services/languages.js';
 
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 const RATE_LIMIT_DELAY = 50;
@@ -55,12 +55,14 @@ function cleanTitle(value: string | undefined): string {
 }
 
 /** TMDB aynı dil için birden fazla bölge tutabiliyor — `de-DE` ile `de-AT`
- *  ayrı iki kayıt — o yüzden bölge kodu da eşleşmek zorunda. */
+ *  ayrı iki kayıt — o yüzden bölge kodu da eşleşmek zorunda. Satırın anahtarı
+ *  bölge değil, uygulamanın dil kodu: `pt-BR` ile `pt-PT` aynı `iso_639_1`'i
+ *  paylaşıyor ve tabloda ancak tam kodla ayrışabiliyorlar. */
 function extractTranslations(entries: TranslationEntry[] | undefined) {
   if (!entries) return [];
   const out: { language: string; title: string }[] = [];
-  for (const [language, region] of Object.entries(TRANSLATION_REGIONS)) {
-    const entry = entries.find((e) => e.iso_639_1 === language && e.iso_3166_1 === region);
+  for (const [language, { iso639, region }] of Object.entries(TRANSLATION_TARGETS)) {
+    const entry = entries.find((e) => e.iso_639_1 === iso639 && e.iso_3166_1 === region);
     const title = cleanTitle(entry?.data?.title ?? entry?.data?.name);
     if (title) out.push({ language, title });
   }
@@ -79,18 +81,30 @@ async function fetchTranslations(target: Target): Promise<TranslationEntry[] | u
 
 async function getTargets(mediaFilter: string | null, all: boolean): Promise<Target[]> {
   const conditions: string[] = [];
+  const params: unknown[] = [];
   if (mediaFilter) conditions.push(`m.media_type = '${mediaFilter}'`);
-  // Varsayılan: yalnızca hiç çevirisi olmayanlar. Betiği yarıda kesip yeniden
-  // başlatmak kaldığı yerden devam etmek anlamına geliyor.
+
+  // Varsayılan: yapılandırılan dillerin **en az biri** eksik olanlar. Betiği
+  // yarıda kesip yeniden başlatmak kaldığı yerden devam etmek anlamına geliyor.
+  //
+  // Buradaki koşul eskiden "hiç çevirisi olmayanlar" idi ve dil listesi
+  // büyüdüğü anda çalışmaz hâle geldi: her başlığın zaten bir çevirisi
+  // olduğu için sorgu sıfır hedef döndürüyordu, geriye tek seçenek olarak
+  // 20 binlik bir `--all` geçişi kalıyordu. Sayım karşılaştırması eksik
+  // dilleri gerçekten görüyor ve geçişi kesilebilir tutuyor.
   if (!all) {
+    params.push(TRANSLATION_LANGUAGES);
     conditions.push(
-      'NOT EXISTS (SELECT 1 FROM movie_translations t WHERE t.movie_id = m.id)'
+      `(SELECT count(*) FROM movie_translations t
+          WHERE t.movie_id = m.id AND t.language_code = ANY($${params.length}::text[]))
+       < array_length($${params.length}::text[], 1)`
     );
   }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
   const result = await pool.query<{ id: number; tmdb_id: number; media_type: 'movie' | 'tv' }>(
-    `SELECT id, tmdb_id, media_type FROM movies m ${where} ORDER BY id`
+    `SELECT id, tmdb_id, media_type FROM movies m ${where} ORDER BY id`,
+    params
   );
   return result.rows.map((r) => ({ id: r.id, tmdbId: r.tmdb_id, mediaType: r.media_type }));
 }

@@ -22,7 +22,7 @@
 
 import { pool } from '../src/db/client.js';
 import {
-  TRANSLATION_REGIONS,
+  TRANSLATION_TARGETS,
   TIER_TWO_LANGUAGES,
   minVotesForLanguage,
 } from '../src/services/languages.js';
@@ -512,8 +512,8 @@ function extractTranslations(
 ): { language: string; title: string }[] {
   if (!entries) return [];
   const out: { language: string; title: string }[] = [];
-  for (const [language, region] of Object.entries(TRANSLATION_REGIONS)) {
-    const entry = entries.find((e) => e.iso_639_1 === language && e.iso_3166_1 === region);
+  for (const [language, { iso639, region }] of Object.entries(TRANSLATION_TARGETS)) {
+    const entry = entries.find((e) => e.iso_639_1 === iso639 && e.iso_3166_1 === region);
     const title = cleanTitle(entry?.data?.name ?? entry?.data?.title);
     if (title) out.push({ language, title });
   }

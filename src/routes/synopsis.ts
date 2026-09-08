@@ -5,7 +5,7 @@ import {
   getMoviesTitles,
   getTmdbRef,
 } from '../db/queries.js';
-import { normalizeLanguage } from '../services/languages.js';
+import { normalizeLanguage, tmdbLocale } from '../services/languages.js';
 import { config } from '../config.js';
 
 interface SynopsisParams {
@@ -42,20 +42,7 @@ interface SynopsisResponse {
   title: string | null;
 }
 
-// Map short language codes to TMDB locale codes
-const LOCALE_MAP: Record<string, string> = {
-  de: 'de-DE',
-  es: 'es-ES',
-  fr: 'fr-FR',
-  it: 'it-IT',
-  ja: 'ja-JP',
-  pt: 'pt-BR',
-  'pt-BR': 'pt-BR',
-  tr: 'tr-TR',
-  en: 'en-US',
-};
-
-// In-memory cache: key = "movieId:lang"
+// In-memory cache: key = "movieId:tmdbLocale"
 interface CachedTexts {
   synopsis: string | null;
   tagline: string | null;
@@ -79,20 +66,24 @@ export async function synopsisRoutes(fastify: FastifyInstance): Promise<void> {
       }
 
       const requestedLang = (lang || 'en').trim();
-      const normalizedLang = requestedLang.toLowerCase();
+      const language = normalizeLanguage(requestedLang);
       const dbSynopsis = await getMovieSynopsis(movieId);
 
-      // Return the database synopsis immediately for English, or when the DB already provides a usable value.
-      if (normalizedLang === 'en') {
+      // İngilizce ve tanımadığımız her dil aynı dala düşüyor: ikisinde de
+      // TMDB'den getirilecek bir çeviri yok. Eskiden tanınmayan bir kod için
+      // `xx-XX` biçiminde bir locale uydurulup TMDB'ye boşuna bir istek
+      // gidiyordu.
+      if (!language) {
         const local = await getLocalTexts(movieId);
         return { synopsis: dbSynopsis, ...local, title: null };
       }
 
-      const tmdbLocale =
-        LOCALE_MAP[requestedLang] ||
-        LOCALE_MAP[normalizedLang] ||
-        `${normalizedLang}-${normalizedLang.toUpperCase()}`;
-      const cacheKey = `${movieId}:${tmdbLocale}`;
+      // TMDB locale'i tek kaynaktan türetiliyor. Burada eskiden ikinci ve
+      // bayat bir eşleme tablosu duruyordu; `zh` anahtarı hiç yoktu ve yedek
+      // dal geçersiz bir `zh-ZH` üretip Çince kullanıcıları özetsiz
+      // bırakıyordu. Bkz. `tmdbLocale`.
+      const locale = tmdbLocale(language);
+      const cacheKey = `${movieId}:${locale}`;
 
       // Check cache first
       const cached = synopsisCache.get(cacheKey);
@@ -129,7 +120,7 @@ export async function synopsisRoutes(fastify: FastifyInstance): Promise<void> {
         // yanıtta ve aynı dilde döndürüyor, yani ilk bölümün çevrilmiş adı ve
         // özeti ek bir istek harcamadan geliyor.
         const append = ref.mediaType === 'tv' ? '&append_to_response=season/1' : '';
-        const tmdbUrl = `https://api.themoviedb.org/3/${ref.mediaType}/${ref.tmdbId}?api_key=${config.tmdbApiKey}&language=${tmdbLocale}${append}`;
+        const tmdbUrl = `https://api.themoviedb.org/3/${ref.mediaType}/${ref.tmdbId}?api_key=${config.tmdbApiKey}&language=${locale}${append}`;
         const response = await fetch(tmdbUrl);
 
         if (!response.ok) {
@@ -165,7 +156,7 @@ export async function synopsisRoutes(fastify: FastifyInstance): Promise<void> {
         // TMDB çevirisi yoksa orijinal başlığa düşüyor ve o başlık okuyanın
         // alfabesinde olmayabiliyor. `getMoviesTitles` yalnızca gerçek
         // çeviriyi döndürüyor; yoksa istemci elindekini kullanmaya devam eder.
-        const titles = await getMoviesTitles([movieId], normalizeLanguage(requestedLang));
+        const titles = await getMoviesTitles([movieId], language);
         const title = titles.get(movieId) ?? null;
 
         const payload = { synopsis, tagline, episodeName, episodeOverview, title };
